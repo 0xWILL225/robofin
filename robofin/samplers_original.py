@@ -1,45 +1,35 @@
 import logging
 from pathlib import Path
-import yaml
-from typing import Dict, List, Optional, Union, Tuple
 
 import numpy as np
 import torch
 import trimesh
 import urchin
 from geometrout.primitive import Sphere
-from geometrout.maths import transform_in_place
-from termcolor import cprint
 
-from robofin.kinematics.numba import label
-from robofin.robot_constants import FrankaConstants
+from robofin.kinematics.numba import get_points_on_franka_arm, get_points_on_franka_arm_from_poses, get_points_on_franka_eef
 from robofin.point_cloud_tools import transform_point_cloud
-from robofin.robots import Robot
+from robofin.robot_constants import FrankaConstants
 from robofin.torch_urdf import TorchURDF
 
 
 class SamplerBase:
     def __init__(
         self,
-        robot: Robot,
         num_robot_points=4096,
         num_eef_points=128,
         use_cache=True,
         with_base_link=True,
     ):
         logging.getLogger("trimesh").setLevel("ERROR")
-        self.robot = robot
         self.with_base_link = with_base_link
         self.num_robot_points = num_robot_points
         self.num_eef_points = num_eef_points
-        
-        # Load link configuration
-        self._load_robot_config()
 
         if use_cache and self._init_from_cache_():
             return
 
-        robot_urdf = urchin.URDF.load(str(robot.urdf_path), lazy_load_meshes=True)
+        robot = urchin.URDF.load(FrankaConstants.urdf, lazy_load_meshes=True)
 
         # If we made it all the way here with the use_cache flag set,
         # then we should be creating new cache files locally
@@ -68,40 +58,27 @@ class SamplerBase:
             print(f"Saving new file to cache: {file_name}")
             np.save(file_name, points_to_save)
 
-    def _load_robot_config(self) -> None:
-        """Load link configuration from robot_config.yaml"""
-        robot_config_path = self.robot.robot_directory / "robot_config.yaml"
-        with open(robot_config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        link_cfg = config['robot_config']
-        self.tcp_link_name = link_cfg['tcp_link_name']
-        self.eef_links = link_cfg['eef_links']
-        self.eef_visual_links = link_cfg['eef_visual_links']
-        self.arm_visual_links = link_cfg['arm_visual_links']
-        self.arm_links = link_cfg['arm_links']
-
-    def _initialize_eef_points_and_normals(self, robot: Robot, N: int) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-        # Use configured end effector visual links
+    def _initialize_eef_points_and_normals(self, robot, N):
         links = [
             link
-            for link in robot.urdf.links
-            if link.name in set(self.eef_visual_links)
+            for link in robot.links
+            if link.name
+            in set(
+                [
+                    "panda_hand",
+                    "panda_rightfinger",
+                    "panda_leftfinger",
+                ]
+            )
         ]
-        
-        meshes = []
-        for link in links:
-            mesh_filename = link.visuals[0].geometry.mesh.filename
-            
-            # Handle both absolute file URIs and relative paths
-            if mesh_filename.startswith('file://'):
-                # Remove file:// prefix and use absolute path
-                mesh_path = mesh_filename[7:]  # Remove 'file://'
-            else:
-                # Relative path - prepend robot directory
-                mesh_path = Path(self.robot.urdf_path).parent / mesh_filename
-            
-            meshes.append(trimesh.load(mesh_path, force="mesh"))
-            
+        meshes = [
+            trimesh.load(
+                Path(FrankaConstants.urdf).parent
+                / link.visuals[0].geometry.mesh.filename,
+                force="mesh",
+            )
+            for link in links
+        ]
         areas = [mesh.bounding_box_oriented.area for mesh in meshes]
         num_points = np.round(N * np.array(areas) / np.sum(areas))
 
@@ -118,29 +95,35 @@ class SamplerBase:
         return points, normals
 
     def _initialize_robot_points(self, robot, N):
-        # Use all links that have visual meshes
         links = [
             link
-            for link in robot.urdf.links
-            if len(link.visuals) > 0 and 
-               hasattr(link.visuals[0].geometry, 'mesh') and 
-               link.visuals[0].geometry.mesh is not None
+            for link in robot.links
+            if link.name
+            in set(
+                [
+                    "panda_link0",
+                    "panda_link1",
+                    "panda_link2",
+                    "panda_link3",
+                    "panda_link4",
+                    "panda_link5",
+                    "panda_link6",
+                    "panda_link7",
+                    "panda_hand",
+                    "panda_rightfinger",
+                    "panda_leftfinger",
+                ]
+            )
         ]
 
-        meshes = []
-        for link in links:
-            mesh_filename = link.visuals[0].geometry.mesh.filename
-            
-            # Handle both absolute file URIs and relative paths
-            if mesh_filename.startswith('file://'):
-                # Remove file:// prefix and use absolute path
-                mesh_path = mesh_filename[7:]  # Remove 'file://'
-            else:
-                # Relative path - prepend robot directory
-                mesh_path = Path(self.robot.urdf_path).parent / mesh_filename
-            
-            meshes.append(trimesh.load(mesh_path, force="mesh"))
-            
+        meshes = [
+            trimesh.load(
+                Path(FrankaConstants.urdf).parent
+                / link.visuals[0].geometry.mesh.filename,
+                force="mesh",
+            )
+            for link in links
+        ]
         areas = [mesh.bounding_box_oriented.area for mesh in meshes]
         num_points = np.round(N * np.array(areas) / np.sum(areas)).astype(int)
         rounding_error = N - np.sum(num_points)
@@ -179,18 +162,10 @@ class SamplerBase:
         return normals
 
     def _get_cache_file_name_(self):
-        # TEMPORARY: Use the same cache location as the original Franka sampler for testing compatibility
-        # This ensures both samplers load from the exact same cache file during testing
-        # TODO: Once testing is complete, remove this and use robot-specific cache directories
-        cprint(f"NOTE: Using hardcoded Franka point cloud cache", "yellow")
         return (
             FrankaConstants.point_cloud_cache
             / f"franka_point_cloud_{self.num_robot_points}_{self.num_eef_points}.npy"
         )
-        # return (
-        #     self.robot.robot_directory / "point_cloud_cache" 
-        #     / f"robot_point_cloud_{self.num_robot_points}_{self.num_eef_points}.npy"
-        # )
 
     def _init_from_cache_(self):
         file_name = self._get_cache_file_name_()
@@ -206,109 +181,57 @@ class SamplerBase:
         return True
 
 
-def get_points_on_robot_arm(robot: Robot, 
-                            config: np.ndarray, 
-                            auxiliary_joint_values: Dict[str, float], 
-                            num_points: int, 
-                            link_points: Dict[str, np.ndarray],
-                            arm_visual_links: List[str],
-                            base_pose: np.ndarray = np.eye(4)) -> np.ndarray:
-    fk = robot.visual_fk(config, auxiliary_joint_values, base_pose=base_pose)
-    all_points: np.ndarray = np.array([])
-    for i, link_name in enumerate(arm_visual_links):
-        points = label(transform_in_place(np.copy(link_points[link_name]), fk[link_name]), float(i))
-        all_points = np.concatenate((all_points, points), axis=0)
-    if num_points > 0:
-        return all_points[np.random.choice(all_points.shape[0], num_points, replace=False), :]
-    return all_points
-
-
-
-def get_points_on_robot_arm_from_poses(poses: Union[List[np.ndarray], np.ndarray], 
-                                       num_points: int, 
-                                       link_points: Dict[str, np.ndarray]) -> np.ndarray:
-    pass
-
-
-def get_points_on_robot_eef(robot: Robot,
-                            pose: np.ndarray,
-                            auxiliary_joint_values: Dict[str, float],
-                            frame: str,
-                            num_points: int,
-                            link_points: Dict[str, np.ndarray]) -> np.ndarray:
-    """_summary_
-
-    Args:
-        robot (Robot): _description_
-        pose (np.ndarray): absolute pose of the link with name `frame`
-        auxiliary_joint_values (Dict[str, float]): _description_
-        frame (str): _description_
-        num_points (int): _description_
-        link_points (Dict[str, np.ndarray]): _description_
-        eef_visual_links (List[str]): _description_
-
-    Returns:
-        np.ndarray: _description_
-    """
-    
-    fk = robot.eef_visual_fk(pose, frame, auxiliary_joint_values)
-    
-    all_points = np.array([])
-    for i, link_name in enumerate(robot.eef_visual_links):
-        points = label(transform_in_place(np.copy(link_points[link_name]), fk[link_name]), float(i))
-        all_points = np.concatenate((all_points, points), axis=0)
-    if num_points > 0:
-        return all_points[np.random.choice(all_points.shape[0], num_points, replace=False), :]
-    return all_points
-
-
-
-class NumpyRobotSampler(SamplerBase):
-    def __init__(self, robot: Robot, **kwargs):
-        super().__init__(robot, **kwargs)
-        self.robot = robot
-        
-    def sample(self, cfg: np.ndarray, auxiliary_joint_values: Dict[str, float], num_points: Optional[int] = None) -> np.ndarray:
+class NumpyFrankaSampler(SamplerBase):
+    def sample(self, cfg, prismatic_joint, num_points=None):
         """num_points = 0 implies use all points."""
-        assert num_points is None or 0 < num_points <= self.num_robot_points
-        return get_points_on_robot_arm(
-            self.robot,
+        assert num_points is None or 0 < num_points <= self.num_eef_points
+        return get_points_on_franka_arm(
             cfg,
-            auxiliary_joint_values,
+            prismatic_joint,
             num_points or 0,
-            self.points,
-            self.arm_visual_links,
+            self.points["panda_link0"],
+            self.points["panda_link1"],
+            self.points["panda_link2"],
+            self.points["panda_link3"],
+            self.points["panda_link4"],
+            self.points["panda_link5"],
+            self.points["panda_link6"],
+            self.points["panda_link7"],
+            self.points["panda_hand"],
+            self.points["panda_leftfinger"],
+            self.points["panda_rightfinger"],
         )
 
-    def sample_from_poses(self, poses: Union[List[np.ndarray], np.ndarray], num_points: Optional[int] = None) -> np.ndarray:
+    def sample_from_poses(self, poses, num_points=None):
         assert num_points is None or 0 < num_points <= self.num_eef_points
-        return get_points_on_robot_arm_from_poses(
+        return get_points_on_franka_arm_from_poses(
             poses,
             num_points or 0,
-            self.points
+            self.points["panda_link0"],
+            self.points["panda_link1"],
+            self.points["panda_link2"],
+            self.points["panda_link3"],
+            self.points["panda_link4"],
+            self.points["panda_link5"],
+            self.points["panda_link6"],
+            self.points["panda_link7"],
+            self.points["panda_hand"],
+            self.points["panda_leftfinger"],
+            self.points["panda_rightfinger"],
         )
 
     def sample_end_effector(
-        self, 
-        pose: np.ndarray, 
-        auxiliary_joint_values: Dict[str, float],
-        frame: Optional[str] = None,
-        num_points: Optional[int] = None
-    ) -> np.ndarray:
-        """Sample end effector point cloud."""
+        self, pose, prismatic_joint, num_points=None, frame="right_gripper"
+    ):
         assert num_points is None or 0 < num_points <= self.num_eef_points
-
-        if frame is None:
-            frame = self.tcp_link_name
-            
-        return get_points_on_robot_eef(
-            self.robot,
+        return get_points_on_franka_eef(
             pose,
-            auxiliary_joint_values,
-            frame,
+            prismatic_joint,
             num_points or 0,
-            self.points,
-            self.eef_visual_links,
+            self.points["eef_panda_hand"],
+            self.points["eef_panda_leftfinger"],
+            self.points["eef_panda_rightfinger"],
+            frame,
         )
 
 

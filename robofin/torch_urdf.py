@@ -81,6 +81,7 @@ class TorchMesh(Mesh):
     def meshes(self, value):
         if self.lazy_filename is not None and value is None:
             self._meshes = None
+            return  # Early return for lazy loading case
         elif isinstance(value, six.string_types):
             value = self._load_and_combine_meshes(value, self.combine)
         elif isinstance(value, (list, tuple, set, np.ndarray)):

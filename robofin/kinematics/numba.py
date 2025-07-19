@@ -470,8 +470,8 @@ def get_points_on_franka_eef(
     panda_rightfinger_points,
     frame,
 ):
-    pose = eef_pose_to_link8(pose, frame)
-    fk = franka_eef_visual_fk(prismatic_joint, pose)
+    lnk8_pose = eef_pose_to_link8(pose, frame)
+    fk = franka_eef_visual_fk(prismatic_joint, lnk8_pose)
     all_points = np.concatenate(
         (
             label(transform_in_place(np.copy(panda_hand_points), fk[0]), 0.0),
