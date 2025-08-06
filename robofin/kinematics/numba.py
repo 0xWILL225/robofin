@@ -35,6 +35,7 @@ def franka_eef_link_fk(prismatic_joint: float, base_pose: np.ndarray) -> np.ndar
     :param prismatic_joint: [TODO:description]
     :return: Poses in the following order:
         [
+             "panda_link8",
              "panda_hand",
              "panda_grasptarget",
              "right_gripper",

@@ -5,7 +5,7 @@ import torch
 from geometrout import SE3, Sphere
 from geometrout.maths import transform_in_place
 
-from robofin.generic_robot import Robot
+from robofin.robots import Robot
 
 SphereInfo = namedtuple("SphereInfo", "radii centers")
 
@@ -101,7 +101,7 @@ class CollisionSpheres:
         full_config = self._build_full_config(config, auxiliary_joint_values)
         
         # Get FK for all links
-        fk_result = self.robot.batch_fk(torch.tensor(full_config, dtype=torch.float32, device=self.robot.device).unsqueeze(0))
+        fk_result = self.robot.fk_torch(torch.tensor(full_config, dtype=torch.float32, device=self.robot.device).unsqueeze(0))
         
         fk_points = []
         for link_name, centers in self.points:
@@ -154,7 +154,7 @@ class CollisionSpheres:
         
         # Get FK for all links
         config_torch = torch.tensor(full_config, dtype=torch.float32, device=self.robot.device)
-        fk_result = self.robot.batch_fk(config_torch.unsqueeze(0))
+        fk_result = self.robot.fk_torch(config_torch.unsqueeze(0))
         
         radii = []
         centers = []
@@ -368,7 +368,7 @@ class TorchCollisionSpheres:
             full_config = config
             
         # Get FK for all links
-        fk_result = self.robot.batch_fk(full_config)
+        fk_result = self.robot.fk_torch(full_config)
         
         radii = []
         centers = []
