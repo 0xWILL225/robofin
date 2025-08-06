@@ -75,7 +75,7 @@ class Robot:
         # NOTE: mimic joints are not included in self.urdf.actuated_joints
         self.main_joint_names: List[str] = [j.name for j in self.urdf.actuated_joints if j.name not in self.auxiliary_joint_names] # same order as given in urdf
             
-        self.neutral_config = robot_cfg['neutral_config'] # only main joints included (not auxiliary joints, not mimic joints)
+        self.neutral_config = np.array(robot_cfg['neutral_config']) # only main joints included (not auxiliary joints, not mimic joints)
         self.neutral_config_dict = {joint_name: joint_value for joint_name, joint_value in zip(self.main_joint_names, self.neutral_config)} 
         for joint_name in self.auxiliary_joint_names:
             if joint_name not in self.neutral_config_dict:
@@ -219,6 +219,11 @@ class Robot:
                         self.fixed_eef_link_transforms[parent_link] = transform
                         queue.append((parent_link, transform))
                         visited.add(parent_link)
+
+        self.torch_fixed_eef_link_transforms = {
+            k: torch.as_tensor(v, dtype=torch.float32, device=self.device)
+            for k, v in self.fixed_eef_link_transforms.items()
+        }
 
     
     def get_visual_transform(self, link_name: str) -> np.ndarray:
@@ -695,7 +700,7 @@ class Robot:
         """
         if frame is None:
             frame = self.tcp_link_name
-        if frame not in self.fixed_eef_link_transforms:
+        if frame not in self.torch_fixed_eef_link_transforms:
             raise ValueError(f"Frame {frame} is not a valid end effector frame (must be a link fixed to tcp)")
         if auxiliary_joint_values is None:
             auxiliary_joint_values = self.auxiliary_joint_defaults
@@ -705,9 +710,9 @@ class Robot:
 
         fk_result = {}
         fk_result[frame] = pose
-        tcp_to_frame = torch.as_tensor(self.fixed_eef_link_transforms[frame], device=pose.device)
+        tcp_to_frame = self.torch_fixed_eef_link_transforms[frame]
         tcp_absolute_pose = torch.matmul(torch.linalg.inv(tcp_to_frame), pose)
-        for link_name, tcp_to_link in self.fixed_eef_link_transforms.items():
+        for link_name, tcp_to_link in self.torch_fixed_eef_link_transforms.items():
             if only_visual and link_name not in self.eef_visual_link_names:
                 continue
             if link_name == frame:
@@ -723,7 +728,7 @@ class Robot:
                         continue
                     if joint.name in auxiliary_joint_values:
                         joint_value = auxiliary_joint_values[joint.name]
-                        joint_transform = torch.as_tensor(self._get_joint_transform(joint, joint_value), device=pose.device)
+                        joint_transform = torch.as_tensor(self._get_joint_transform(joint, joint_value), device=pose.device, dtype=pose.dtype)
                         child_pose = torch.matmul(joint_transform, parent_pose)
                         fk_result[child_link] = child_pose
 

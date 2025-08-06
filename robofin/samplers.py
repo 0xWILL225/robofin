@@ -279,9 +279,9 @@ def get_points_on_robot_eef(robot: Robot,
     """
     
     fk = robot.eef_visual_fk(pose, frame, auxiliary_joint_values)
-    
+
     point_list = [
-        label(transform_in_place(np.copy(link_points[link_name]), fk[link_name]), float(i))
+        label(transform_in_place(np.copy(link_points["eef_" + link_name]), fk[link_name]), float(i))
         for i, link_name in enumerate(robot.eef_visual_link_names)
     ]
     all_points = np.concatenate(point_list, axis=0)
@@ -302,11 +302,15 @@ class NumpyRobotSampler(SamplerBase):
         
     def sample(self, 
         cfg: np.ndarray, 
-        auxiliary_joint_values: Dict[str, float], 
+        auxiliary_joint_values: Optional[Dict[str, float]] = None,
         num_points: Optional[int] = None,
     ) -> np.ndarray:
         """num_points = 0 implies use all points."""
         assert num_points is None or 0 < num_points <= self.num_robot_points
+
+        if auxiliary_joint_values is None:
+            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
+
         return get_points_on_robot_arm(
             self.robot,
             cfg,
@@ -336,14 +340,17 @@ class NumpyRobotSampler(SamplerBase):
         )
 
     def sample_end_effector(
-        self, 
-        pose: np.ndarray, 
-        auxiliary_joint_values: Dict[str, float],
+        self,
+        pose: np.ndarray,
+        auxiliary_joint_values: Optional[Dict[str, float]] = None,
         frame: Optional[str] = None,
         num_points: Optional[int] = None
     ) -> np.ndarray:
         """Sample end effector point cloud."""
         assert num_points is None or 0 < num_points <= self.num_eef_points
+
+        if auxiliary_joint_values is None:
+            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
 
         if frame is None:
             frame = self.tcp_link_name
@@ -478,10 +485,12 @@ class TorchRobotSampler(SamplerBase):
     def sample_end_effector_with_normals(
         self,
         poses,
-        auxiliary_joint_values: Dict[str, float],
+        auxiliary_joint_values: Optional[Dict[str, float]] = None,
         num_points=None,
         frame=None,
     ):
+        if auxiliary_joint_values is None:
+            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
         if frame is None:
             frame = self.robot.tcp_link_name
         assert frame in self.robot.fixed_eef_link_transforms, "Other frames not yet suppported"
@@ -496,11 +505,13 @@ class TorchRobotSampler(SamplerBase):
     def sample_end_effector(
         self,
         poses,
-        auxiliary_joint_values: Dict[str, float],
+        auxiliary_joint_values: Optional[Dict[str, float]] = None,
         num_points=None,
         frame=None,
         in_place=True,
     ):
+        if auxiliary_joint_values is None:
+            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
         if frame is None:
             frame = self.robot.tcp_link_name
         assert frame in self.robot.fixed_eef_link_transforms, "Other frames not yet suppported"
@@ -638,8 +649,15 @@ class TorchRobotSampler(SamplerBase):
         return pc[:, random_idxs, :]
 
     def sample(
-        self, config, auxiliary_joint_values: Dict[str, float], num_points=None, only_eff=False, in_place=True
+        self,
+        config,
+        auxiliary_joint_values: Optional[Dict[str, float]] = None,
+        num_points=None,
+        only_eff=False,
+        in_place=True
     ):
+        if auxiliary_joint_values is None:
+            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
         return self._sample(
             with_normals=False,
             config=config,

@@ -302,7 +302,8 @@ class TorchFrankaSampler(SamplerBase):
         ], "Other frames not yet suppported"
         if poses.ndim == 2:
             poses = poses.unsqueeze(0)
-        default_cfg = torch.zeros((1, 9), device=poses.device)
+        # default_cfg = torch.zeros((1, 9), device=poses.device)
+        default_cfg = torch.zeros((1, 8), device=poses.device)
         default_cfg[0, 7:] = prismatic_joint
         link_fk = self.robot.link_fk_batch(default_cfg, use_names=True)
         visual_fk = self.robot.visual_geometry_fk_batch(default_cfg, use_names=True)
