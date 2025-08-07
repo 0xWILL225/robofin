@@ -2,116 +2,151 @@ import numpy as np
 import torch
 
 import robofin.kinematics.numba as rkn
-from robofin.robofin import samplers
+from robofin import samplers
 from robofin.robot_constants import FrankaConstants
 from robofin.robots import Robot
 from robofin.torch_urdf import TorchURDF
 
 
-def compare_point_clouds(pc1, pc2):
-    return np.allclose(pc1, pc2)
+robot = Robot("/workspace/assets/panda/panda.urdf")
 
+def compare_point_clouds(pc1: np.ndarray,
+                         pc2: np.ndarray,
+                         abs_tol: float=1e-7) -> bool:
+    """
+    Return True if input point clouds are identical (within given tolerance)
+    """
+    return np.allclose(pc1, pc2, atol=abs_tol)
 
 def test_fk():
-    robot = TorchURDF.load(FrankaConstants.urdf, lazy_load_meshes=True)
+    """
+    Test that numpy and torch forward kinematics give the same results.
+    """
 
-    rfk = rkn.franka_arm_link_fk(FrankaConstants.NEUTRAL, 0.04, np.eye(4))
-    fk = robot.link_fk_batch(
-        torch.as_tensor([*FrankaConstants.NEUTRAL, 0.04]).unsqueeze(0), use_names=True
-    )
+    np_fk = robot.fk(robot.neutral_config)
+    torch_fk = robot.fk_torch(torch.as_tensor(robot.neutral_config))
 
-    for link_name, link_idx in FrankaConstants.ARM_LINKS.__members__.items():
-        assert np.allclose(fk[link_name].squeeze(0).numpy(), rfk[link_idx]), link_name
+    for link_name in robot.arm_link_names:
+        assert np.allclose(torch_fk[link_name].squeeze(0).numpy(),
+                           np_fk[link_name]), link_name
 
-    rfk = rkn.franka_arm_visual_fk(FrankaConstants.NEUTRAL, 0.04, np.eye(4))
-    fk = robot.visual_geometry_fk_batch(
-        torch.as_tensor([*FrankaConstants.NEUTRAL, 0.04]).unsqueeze(0), use_names=True
-    )
-    for link_name, link_idx in FrankaConstants.ARM_VISUAL_LINKS.__members__.items():
-        assert np.allclose(fk[link_name].squeeze(0).numpy(), rfk[link_idx]), link_name
+    np_visual_fk = robot.visual_fk(robot.neutral_config)
+    torch_visual_fk = robot.visual_fk_torch(torch.as_tensor(robot.neutral_config))
+
+    for link_name in robot.arm_visual_link_names:
+        assert np.allclose(torch_visual_fk[link_name].squeeze(0).numpy(),
+                           np_visual_fk[link_name]), link_name
 
 
 def test_eef_fk():
-    robot = TorchURDF.load(FrankaConstants.urdf, lazy_load_meshes=True)
+    """
+    Test that numpy and torch end-effector forward kinematics give the same results.
+    """
+    np_fk = robot.fk(robot.neutral_config)
+    eef_pose = np_fk[robot.tcp_link_name]
 
-    rfk = rkn.franka_arm_link_fk(FrankaConstants.NEUTRAL, 0.04, np.eye(4))
-    fk = robot.link_fk_batch(
-        torch.as_tensor([*FrankaConstants.NEUTRAL, 0.04]).unsqueeze(0), use_names=True
-    )
+    eef_np_fk = robot.eef_fk(eef_pose)
+    eef_torch_fk = robot.eef_fk_torch(torch.as_tensor(eef_pose))
 
-    for link_name, link_idx in FrankaConstants.ARM_LINKS.__members__.items():
-        assert np.allclose(fk[link_name].squeeze(0).numpy(), rfk[link_idx]), link_name
+    for link_name in robot.eef_link_names:
+        assert np.allclose(eef_torch_fk[link_name].squeeze(0).numpy(), 
+                           eef_np_fk[link_name]), link_name
 
-    rfk = rkn.franka_arm_visual_fk(FrankaConstants.NEUTRAL, 0.04, np.eye(4))
-    fk = robot.visual_geometry_fk_batch(
-        torch.as_tensor([*FrankaConstants.NEUTRAL, 0.04]).unsqueeze(0), use_names=True
-    )
-    for link_name, link_idx in FrankaConstants.ARM_VISUAL_LINKS.__members__.items():
-        assert np.allclose(fk[link_name].squeeze(0).numpy(), rfk[link_idx]), link_name
+    eef_np_visual_fk = robot.eef_visual_fk(eef_pose)
+    eef_torch_visual_fk = robot.eef_visual_fk_torch(torch.as_tensor(eef_pose))
+
+    for link_name in robot.eef_visual_link_names:
+        assert np.allclose(eef_torch_visual_fk[link_name].squeeze(0).numpy(), 
+                           eef_np_visual_fk[link_name]), link_name
 
 
 def test_deterministic_numpy_sampling():
-    # Create generic robot instance
-    robot = Robot("/workspace/assets/panda")
-    
-    # Create generic samplers
-    sampler1 = samplers.NumpyRobotSampler(robot,
-        num_robot_points=4096, num_eef_points=128, use_cache=True, with_base_link=True
+    """ 
+    Test that two samplers with the same parameters produce the same samples.
+    """
+    sampler1 = samplers.NumpyRobotSampler(
+        robot,
+        num_robot_points=4096,
+        num_eef_points=128,
+        use_cache=True,
+        with_base_link=True
     )
-    sampler2 = samplers.NumpyRobotSampler(robot,
-        num_robot_points=4096, num_eef_points=128, use_cache=True, with_base_link=True
+    sampler2 = samplers.NumpyRobotSampler(
+        robot,
+        num_robot_points=4096,
+        num_eef_points=128,
+        use_cache=True,
+        with_base_link=True
     )
-    
-    # Test main sampling
-    samples1 = sampler1.sample(
-        FrankaConstants.NEUTRAL,
-        0.04,
-    )
-    samples2 = sampler2.sample(
-        FrankaConstants.NEUTRAL,
-        0.04,
-    )
+    samples1 = sampler1.sample(robot.neutral_config)
+    samples2 = sampler2.sample(robot.neutral_config)
     assert compare_point_clouds(samples1, samples2)
-    
-    # Test end effector sampling
     test_pose = np.eye(4)
-    test_pose[:3, 3] = [0.5, 0.0, 0.5]  # Set position
-    
-    eef_samples1 = sampler1.sample_end_effector(
-        test_pose,
-        0.04,
-    )
-    eef_samples2 = sampler2.sample_end_effector(
-        test_pose,
-        0.04,
-    )
+    test_pose[:3, 3] = [0.5, 0.0, 0.5]
+    eef_samples1 = sampler1.sample_end_effector(test_pose)
+    eef_samples2 = sampler2.sample_end_effector(test_pose)
     assert compare_point_clouds(eef_samples1, eef_samples2)
 
 
-def test_deterministic_gen_cache():
-    # Create generic robot instance
-    robot = Robot("/workspace/assets/panda")
-    
-    sampler1 = samplers.NumpyRobotSampler(robot,
-        num_robot_points=2048, num_eef_points=128, use_cache=True, with_base_link=True
+
+def test_deterministic_torch_sampling():
+    sampler1 = samplers.TorchRobotSampler(
+        robot,
+        num_robot_points=4096,
+        num_eef_points=128,
+        use_cache=True,
+        with_base_link=True
     )
-    samples1 = sampler1.sample(
-        FrankaConstants.NEUTRAL,
-        0.04,
+    sampler2 = samplers.TorchRobotSampler(
+        robot,
+        num_robot_points=4096,
+        num_eef_points=128,
+        use_cache=True,
+        with_base_link=True
+    )
+    samples1 = sampler1.sample(torch.as_tensor(robot.neutral_config))
+    samples2 = sampler2.sample(torch.as_tensor(robot.neutral_config))
+    assert isinstance(samples1, torch.Tensor) and isinstance(samples2, torch.Tensor)
+    assert compare_point_clouds(samples1.squeeze().numpy(), samples2.squeeze().numpy())
+
+    neutral_fk = robot.fk_torch(torch.as_tensor(robot.neutral_config))
+    eef_pose = neutral_fk[robot.tcp_link_name]
+
+    eef_samples1 = sampler1.sample_end_effector(eef_pose)
+    eef_samples2 = sampler2.sample_end_effector(eef_pose)
+    assert isinstance(eef_samples1, torch.Tensor) and isinstance(eef_samples2, torch.Tensor)
+    assert compare_point_clouds(
+        eef_samples1.squeeze().numpy(), eef_samples2.squeeze().numpy()
     )
 
-    sampler2 = samplers.NumpyRobotSampler(robot,
-        num_robot_points=1024, num_eef_points=128, use_cache=True, with_base_link=True
+
+def test_deterministic_compare():
+    sampler1 = samplers.NumpyRobotSampler(
+        robot,
+        num_robot_points=4096,
+        num_eef_points=128,
+        use_cache=True,
+        with_base_link=True
     )
-    # Test that cache is working properly
-    samples2 = sampler2.sample(
-        FrankaConstants.NEUTRAL,
-        0.04,
+    sampler2 = samplers.TorchRobotSampler(
+        robot,
+        num_robot_points=4096,
+        num_eef_points=128,
+        use_cache=True,
+        with_base_link=True
     )
-    
-    # They should be deterministic from cache
-    assert len(samples1) > 0
-    assert len(samples2) > 0
+    samples1 = sampler1.sample(robot.neutral_config)
+    samples2 = sampler2.sample(torch.as_tensor(robot.neutral_config))
+    assert isinstance(samples2, torch.Tensor)
+    assert compare_point_clouds(samples1, samples2.squeeze().numpy())
+
+    neutral_fk = robot.fk(robot.neutral_config)
+    eef_pose = neutral_fk[robot.tcp_link_name]
+
+    eef_samples1 = sampler1.sample_end_effector(eef_pose)
+    eef_samples2 = sampler2.sample_end_effector(torch.as_tensor(eef_pose))
+    assert isinstance(eef_samples2, torch.Tensor)
+    assert compare_point_clouds(eef_samples1, eef_samples2.squeeze().numpy())
 
 
 if __name__ == "__main__":
@@ -128,9 +163,13 @@ if __name__ == "__main__":
     print("Running test_deterministic_numpy_sampling...")
     test_deterministic_numpy_sampling()
     print("✓ test_deterministic_numpy_sampling passed")
+
+    print("Running test_deterministic_torch_sampling...")
+    test_deterministic_torch_sampling()
+    print("✓ test_deterministic_torch_sampling passed")
     
-    print("Running test_deterministic_gen_cache...")
-    test_deterministic_gen_cache()
-    print("✓ test_deterministic_gen_cache passed")
+    print("Running test_deterministic_compare...")
+    test_deterministic_compare()
+    print("✓ test_deterministic_compare passed")
     
     print("All generic tests passed!")

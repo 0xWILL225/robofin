@@ -68,7 +68,7 @@ class Robot:
         self.eef_link_names = robot_cfg['eef_links']
         self.eef_visual_link_names = robot_cfg['eef_visual_links']
         self.arm_visual_link_names = robot_cfg['arm_visual_links']
-        # self.arm_link_names = robot_cfg['arm_links']
+        self.arm_link_names = robot_cfg['arm_links']
         self.auxiliary_joint_names: List[str] = robot_cfg['auxiliary_joint_names']
         auxiliary_joints_values: List[float] = robot_cfg['auxiliary_joints_values']
         self.auxiliary_joint_defaults = {joint_name: joint_value for joint_name, joint_value in zip(self.auxiliary_joint_names, auxiliary_joints_values)}
@@ -221,7 +221,7 @@ class Robot:
                         visited.add(parent_link)
 
         self.torch_fixed_eef_link_transforms = {
-            k: torch.as_tensor(v, dtype=torch.float32, device=self.device)
+            k: torch.as_tensor(v, dtype=torch.float64, device=self.device)
             for k, v in self.fixed_eef_link_transforms.items()
         }
 
@@ -292,22 +292,26 @@ class Robot:
                                config: np.ndarray, 
                                auxiliary_joint_values: Optional[Dict[str, float]]=None) -> np.ndarray:
         """
-        Construct full configuration vector from main config and auxiliary joint values.
+        Construct full configuration vector from main config and auxiliary 
+        joint values.
+        B: batch dimension.
         
         Args:
-            config : np.ndarray of shape (MAIN_DOF,), a configuration vector for 
+            config : np.ndarray of shape (B, MAIN_DOF) or (MAIN_DOF,), a configuration vector for 
                 the main joints.
             auxiliary_joint_values : Dict[str, float], a map from auxiliary 
                 joint names to values
             
         Returns:
-            full_config : np.ndarray of shape (DOF,), a full configuration vector 
-                including auxiliary joints.
+            full_config : np.ndarray of shape (B, DOF), a full configuration 
+                vector including auxiliary joints.
         """
         if auxiliary_joint_values is None:
             auxiliary_joint_values = self.auxiliary_joint_defaults
         if config.ndim == 1:
             config = config[None, :]
+        assert config.shape[1] == self.MAIN_DOF, "Input config dimension does not match MAIN_DOF"
+
         batch_size = config.shape[0]
         full_config = np.zeros((batch_size, self.DOF), dtype=config.dtype)
         input_config_idx = 0
@@ -328,17 +332,19 @@ class Robot:
                                      config: torch.Tensor,
                                      auxiliary_joint_values: Optional[Dict[str, float]]=None) -> torch.Tensor:
         """
-        Construct full configuration vector from main config and auxiliary joint values.
+        Construct full configuration vector from main config and auxiliary 
+        joint values.
+        B: batch dimension.
         
         Args:
-            config : torch.Tensor of shape (MAIN_DOF,), a configuration vector for 
-                the main joints.
+            config : torch.Tensor of shape (B, MAIN_DOF) or (MAIN_DOF,), a 
+                configuration vector for the main joints.
             auxiliary_joint_values : Dict[str, float], a map from auxiliary 
                 joint names to values
             
         Returns:
-            full_config : torch.Tensor of shape (DOF,), a full configuration vector 
-                including auxiliary joints.
+            full_config : torch.Tensor of shape (B, DOF), a full configuration 
+                vector including auxiliary joints.
         """
 
         assert str(config.device) == self.device, f"Config device '{config.device}' does not match robot device '{self.device}'"
@@ -347,6 +353,8 @@ class Robot:
             auxiliary_joint_values = self.auxiliary_joint_defaults
         if config.dim() == 1:
             config = config.unsqueeze(0)
+        assert config.shape[1] == self.MAIN_DOF, "Input config dimension does not match MAIN_DOF"
+
         batch_size = config.shape[0]
         full_config = torch.zeros((batch_size, self.DOF), dtype=config.dtype, device=config.device)
         input_config_idx = 0
@@ -417,14 +425,15 @@ class Robot:
             return fk_result
 
         link_fk_result = self.urdf.link_fk_batch(full_config, link=link_name, use_names=True)
+        assert isinstance(link_fk_result, np.ndarray)
         if not np.allclose(base_pose, np.eye(4)):
             return np.matmul(base_pose, link_fk_result)
         return link_fk_result
 
-    def fk_torch(self, 
-        config: torch.Tensor, 
-        auxiliary_joint_values: Optional[Dict[str, float]]=None, 
-        link_name: Optional[str]=None, 
+    def fk_torch(self,
+        config: torch.Tensor,
+        auxiliary_joint_values: Optional[Dict[str, float]]=None,
+        link_name: Optional[str]=None,
         base_pose: torch.Tensor=torch.eye(4)
     ) -> Union[Dict[str, torch.Tensor], torch.Tensor]:
         """
@@ -477,10 +486,10 @@ class Robot:
         return fk_result[link_name]
 
 
-    def visual_fk(self, 
-        config: np.ndarray, 
-        auxiliary_joint_values: Optional[Dict[str, float]]=None, 
-        link_name: Optional[str]=None, 
+    def visual_fk(self,
+        config: np.ndarray,
+        auxiliary_joint_values: Optional[Dict[str, float]]=None,
+        link_name: Optional[str]=None,
         base_pose: np.ndarray=np.eye(4)
     ) -> Union[Dict[str, np.ndarray], np.ndarray]:
         """
@@ -537,10 +546,10 @@ class Robot:
             return fk_visual_result
         return np.matmul(base_pose, fk_visual_result[link_name])
 
-    def visual_fk_torch(self, 
-        config: torch.Tensor, 
-        auxiliary_joint_values: Optional[Dict[str, float]]=None, 
-        link_name: Optional[str]=None, 
+    def visual_fk_torch(self,
+        config: torch.Tensor,
+        auxiliary_joint_values: Optional[Dict[str, float]]=None,
+        link_name: Optional[str]=None,
         base_pose: torch.Tensor=torch.eye(4)
     ) -> Union[Dict[str, torch.Tensor], torch.Tensor]:
         """
@@ -612,7 +621,7 @@ class Robot:
             T[:3, :3] = R
             return origin @ T
 
-        elif joint.joint_type == "prismatic":
+        if joint.joint_type == "prismatic":
             axis = np.asarray(joint.axis, dtype=float)
             axis /= np.linalg.norm(axis)
 
@@ -620,14 +629,13 @@ class Robot:
             T[:3, 3] = q * axis
             return origin @ T
 
-        elif joint.joint_type == "fixed":
+        if joint.joint_type == "fixed":
             return origin
 
-        else:
-            raise ValueError(
-                f"Unsupported joint type '{joint.joint_type}'. "
-                "Expected fixed, revolute, continuous, or prismatic."
-            )
+        raise ValueError(
+            f"Unsupported joint type '{joint.joint_type}'. "
+            "Expected fixed, revolute, continuous, or prismatic."
+        )
 
     def eef_fk(self,
         pose: np.ndarray,
@@ -636,6 +644,8 @@ class Robot:
     ) -> Dict[str, np.ndarray]:
         """
         Forward kinematics for the end effector links (numpy version).
+
+        Currently not batched.
 
         Args:
             pose: np.ndarray of shape (4, 4), the pose of the link with name `frame`
@@ -680,7 +690,7 @@ class Robot:
 
     def eef_fk_torch(self,
         pose: torch.Tensor,
-        frame: str,
+        frame: Optional[str]=None,
         auxiliary_joint_values: Optional[Dict[str, float]]=None,
         only_visual: bool=False,
     ) -> Dict[str, torch.Tensor]:
@@ -710,7 +720,7 @@ class Robot:
 
         fk_result = {}
         fk_result[frame] = pose
-        tcp_to_frame = self.torch_fixed_eef_link_transforms[frame]
+        tcp_to_frame = self.torch_fixed_eef_link_transforms[frame].to(dtype=pose.dtype, device=pose.device)
         tcp_absolute_pose = torch.matmul(torch.linalg.inv(tcp_to_frame), pose)
         for link_name, tcp_to_link in self.torch_fixed_eef_link_transforms.items():
             if only_visual and link_name not in self.eef_visual_link_names:
@@ -736,11 +746,13 @@ class Robot:
 
     def eef_visual_fk(self,
         pose: np.ndarray,
-        frame: str,
+        frame: Optional[str]=None,
         auxiliary_joint_values: Optional[Dict[str, float]]=None
     ) -> Dict[str, np.ndarray]:
         """
         Forward kinematics for the end effector's links with visual meshes (numpy version).
+
+        Currently not batched.
         
         Args:
             pose: np.ndarray of shape (4, 4), the pose of the link with name `frame`
@@ -754,6 +766,11 @@ class Robot:
             belonging to the end effector with visual meshes.
 
         """
+        if frame is None:
+            frame = self.tcp_link_name
+        if frame not in self.torch_fixed_eef_link_transforms:
+            raise ValueError(f"Frame {frame} is not a valid end effector frame (must be a link fixed to tcp)")
+
         fk_result = self.eef_fk(pose, frame, auxiliary_joint_values)
         fk_visual_result = {}
         for link_name, link_pose in fk_result.items():
@@ -764,7 +781,7 @@ class Robot:
 
     def eef_visual_fk_torch(self,
         pose: torch.Tensor,
-        frame: str,
+        frame: Optional[str]=None,
         auxiliary_joint_values: Optional[Dict[str, float]]=None
     ) -> Dict[str, torch.Tensor]:
         """
@@ -781,6 +798,11 @@ class Robot:
             poses of shape (batch_size, 4, 4). The absolute transforms of the links with 
             visual meshes belonging to the end effector.
         """
+        if frame is None:
+            frame = self.tcp_link_name
+        if frame not in self.torch_fixed_eef_link_transforms:
+            raise ValueError(f"Frame {frame} is not a valid end effector frame (must be a link fixed to tcp)")
+
         fk_result = self.eef_fk_torch(pose, frame, auxiliary_joint_values)
         fk_visual_result = {}
         for link_name, link_pose in fk_result.items():
@@ -788,15 +810,6 @@ class Robot:
                 fk_visual_result[link_name] = link_pose
         return fk_visual_result
 
-
-    # def _build_full_config_dict(self, config: np.ndarray, auxiliary_values: Dict[str, float]=None) -> Dict[str, float]:
-    #     full_config = {}
-    #     for i, joint_name in enumerate(self.main_joint_names):
-    #         full_config[joint_name] = config[i]
-    #     for joint_name, joint_value in auxiliary_values.items():
-    #         full_config[joint_name] = joint_value
-    #     return full_config
-    
     def ik(self, pose, fixed_joint_value, eff_frame=None, joint_range_scalar=1.0):
         """
         Generic IK not yet implemented for arbitrary robots.
@@ -871,67 +884,49 @@ class Robot:
         Returns:
             Normalized joint angles with same shape and type as input
         """
-        # Handle torch tensors differently than numpy arrays
-        if hasattr(config, "device") and hasattr(
-            config, "dtype"
-        ):  # It's a torch tensor
-
-            assert isinstance(config, torch.Tensor), "Expected torch.Tensor"
-
-            # Check input dimensions match the robot's DOF
+        if isinstance(config, torch.Tensor):
             input_dof_dim = 0 if config.dim() == 1 else (1 if config.dim() == 2 else 2)
             input_dof = config.size(input_dof_dim)
             assert input_dof == self.MAIN_DOF, f"Expected {self.MAIN_DOF} DOF, got {input_dof}"
 
-            # Get joint limits as a tensor
             joint_limits = torch.tensor(
                 self.main_joint_limits, dtype=config.dtype, device=config.device
             )
 
-            # Calculate normalization for the configuration
             joint_range = joint_limits[:, 1] - joint_limits[:, 0]
             joint_min = joint_limits[:, 0]
 
-            # Reshape joint limits if needed for broadcasting
             if config.dim() > 1:
                 for _ in range(config.dim() - 1):
                     joint_range = joint_range.unsqueeze(0)
                     joint_min = joint_min.unsqueeze(0)
 
-            # Normalize: first to [0,1], then to the target range
             normalized = (config - joint_min) / joint_range
             normalized = normalized * (limits[1] - limits[0]) + limits[0]
 
             return normalized
 
-        else:  # It's a numpy array or list
-            # Ensure the config is a numpy array
-            if not isinstance(config, np.ndarray):
-                config = np.array(config)
+        if not isinstance(config, np.ndarray):
+            config = np.array(config)
 
-            # Check input dimensions match the robot's DOF
-            input_dof_dim = 0 if config.ndim == 1 else (1 if config.ndim == 2 else 2)
-            input_dof = config.shape[input_dof_dim]
-            assert input_dof == self.MAIN_DOF, f"Expected {self.MAIN_DOF} DOF, got {input_dof}"
+        input_dof_dim = 0 if config.ndim == 1 else (1 if config.ndim == 2 else 2)
+        input_dof = config.shape[input_dof_dim]
+        assert input_dof == self.MAIN_DOF, f"Expected {self.MAIN_DOF} DOF, got {input_dof}"
 
-            # Get joint limits
-            joint_limits = self.main_joint_limits
+        joint_limits = self.main_joint_limits
 
-            # Calculate normalization for the configuration
-            joint_range = joint_limits[:, 1] - joint_limits[:, 0]
-            joint_min = joint_limits[:, 0]
+        joint_range = joint_limits[:, 1] - joint_limits[:, 0]
+        joint_min = joint_limits[:, 0]
 
-            # Reshape joint limits if needed for broadcasting
-            if config.ndim > 1:
-                for _ in range(config.ndim - 1):
-                    joint_range = joint_range[np.newaxis, ...]
-                    joint_min = joint_min[np.newaxis, ...]
+        if config.ndim > 1:
+            for _ in range(config.ndim - 1):
+                joint_range = joint_range[np.newaxis, ...]
+                joint_min = joint_min[np.newaxis, ...]
 
-            # Normalize: first to [0,1], then to the target range
-            normalized = (config - joint_min) / joint_range
-            normalized = normalized * (limits[1] - limits[0]) + limits[0]
+        normalized = (config - joint_min) / joint_range
+        normalized = normalized * (limits[1] - limits[0]) + limits[0]
 
-            return normalized
+        return normalized
 
     def unnormalize_joints(self, config, limits=(-1, 1)):
         """
@@ -947,14 +942,8 @@ class Robot:
         Returns:
             Unnormalized joint angles within the robot's joint limits, with same shape and type as input
         """
-        # Handle torch tensors differently than numpy arrays
-        if hasattr(config, "device") and hasattr(
-            config, "dtype"
-        ):  # It's a torch tensor
 
-            assert isinstance(config, torch.Tensor), "Expected torch.Tensor"
-
-            # Check input dimensions match the robot's DOF
+        if isinstance(config, torch.Tensor):
             input_dof_dim = 0 if config.dim() == 1 else (1 if config.dim() == 2 else 2)
             input_dof = config.size(input_dof_dim)
             assert input_dof == self.MAIN_DOF, f"Expected {self.MAIN_DOF} DOF, got {input_dof}"
@@ -963,59 +952,48 @@ class Robot:
                 (config >= limits[0]) & (config <= limits[1])
             ), f"Normalized values must be in range [{limits[0]}, {limits[1]}]"
 
-            # Get joint limits as a tensor
             joint_limits = torch.tensor(
                 self.main_joint_limits, dtype=config.dtype, device=config.device
             )
 
-            # Calculate unnormalization parameters
             joint_range = joint_limits[:, 1] - joint_limits[:, 0]
             joint_min = joint_limits[:, 0]
 
-            # Reshape joint limits if needed for broadcasting
             if config.dim() > 1:
                 for _ in range(config.dim() - 1):
                     joint_range = joint_range.unsqueeze(0)
                     joint_min = joint_min.unsqueeze(0)
 
-            # Unnormalize: first back to [0,1], then to joint limits
             unnormalized = (config - limits[0]) / (limits[1] - limits[0])
             unnormalized = unnormalized * joint_range + joint_min
 
             return unnormalized
 
-        else:  # It's a numpy array or list
-            # Ensure the config is a numpy array
-            if not isinstance(config, np.ndarray):
-                config = np.array(config)
+        if not isinstance(config, np.ndarray):
+            config = np.array(config)
 
-            # Check input dimensions match the robot's DOF
-            input_dof_dim = 0 if config.ndim == 1 else (1 if config.ndim == 2 else 2)
-            input_dof = config.shape[input_dof_dim]
-            assert input_dof == self.MAIN_DOF, f"Expected {self.MAIN_DOF} DOF, got {input_dof}"
+        input_dof_dim = 0 if config.ndim == 1 else (1 if config.ndim == 2 else 2)
+        input_dof = config.shape[input_dof_dim]
+        assert input_dof == self.MAIN_DOF, f"Expected {self.MAIN_DOF} DOF, got {input_dof}"
 
-            assert np.all(
-                (config >= limits[0]) & (config <= limits[1])
-            ), f"Normalized values must be in range [{limits[0]}, {limits[1]}]"
+        assert np.all(
+            (config >= limits[0]) & (config <= limits[1])
+        ), f"Normalized values must be in range [{limits[0]}, {limits[1]}]"
 
-            # Get joint limits
-            joint_limits = self.main_joint_limits
+        joint_limits = self.main_joint_limits
 
-            # Calculate unnormalization parameters
-            joint_range = joint_limits[:, 1] - joint_limits[:, 0]
-            joint_min = joint_limits[:, 0]
+        joint_range = joint_limits[:, 1] - joint_limits[:, 0]
+        joint_min = joint_limits[:, 0]
 
-            # Reshape joint limits if needed for broadcasting
-            if config.ndim > 1:
-                for _ in range(config.ndim - 1):
-                    joint_range = joint_range[np.newaxis, ...]
-                    joint_min = joint_min[np.newaxis, ...]
+        if config.ndim > 1:
+            for _ in range(config.ndim - 1):
+                joint_range = joint_range[np.newaxis, ...]
+                joint_min = joint_min[np.newaxis, ...]
 
-            # Unnormalize: first back to [0,1], then to joint limits
-            unnormalized = (config - limits[0]) / (limits[1] - limits[0])
-            unnormalized = unnormalized * joint_range + joint_min
+        unnormalized = (config - limits[0]) / (limits[1] - limits[0])
+        unnormalized = unnormalized * joint_range + joint_min
 
-            return unnormalized
+        return unnormalized
         
     def compute_spheres(self, config, auxiliary_joint_values=None):
         """

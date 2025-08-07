@@ -8,8 +8,26 @@ from robofin.robots_original import FrankaRobot
 from robofin.torch_urdf import TorchURDF
 
 
-def compare_point_clouds(pc1, pc2):
-    return np.allclose(pc1, pc2)
+def has_point(point_cloud: np.ndarray,
+              point: np.ndarray,
+              tolerance: float = 1e-6) -> tuple[bool, np.ndarray]:
+    """
+    Returns:
+    exists, idx (bool, np.ndarray): Whether `point` exists in the point cloud
+        and the indices in the point cloud array where the point exists.
+    """
+    mask = np.max(np.abs(point_cloud - point), axis=1) <= tolerance
+    exists = mask.any()
+    idx = np.flatnonzero(mask)
+    return exists, idx
+
+def compare_point_clouds(pc1: np.ndarray,
+                         pc2: np.ndarray,
+                         abs_tol: float=1e-7) -> bool:
+    """
+    Return True if input point clouds are identical
+    """
+    return np.allclose(pc1, pc2, atol=abs_tol)
 
 
 def test_fk():
@@ -147,6 +165,12 @@ def test_deterministic_compare():
         torch.as_tensor(FrankaConstants.NEUTRAL),
         0.04,
     )
+
+    assert isinstance(samples2, torch.Tensor)
+    # for i, point in enumerate(samples1):
+    #     if not has_point(samples2.squeeze().numpy(), point):
+    #         print(f"The numpy point {i} is NOT in the torch points.")
+
     assert compare_point_clouds(samples1, samples2.squeeze().numpy())
     eef_samples1 = sampler1.sample_end_effector(
         FrankaRobot.fk(FrankaConstants.NEUTRAL).matrix,

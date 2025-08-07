@@ -34,7 +34,7 @@ class SamplerBase:
         self.num_eef_points = num_eef_points
         
         # Load link configuration
-        self._load_robot_config()
+        # self._load_robot_config()
 
         if use_cache and self._init_from_cache_():
             return
@@ -66,24 +66,24 @@ class SamplerBase:
             print(f"Saving new file to cache: {file_name}")
             np.save(file_name, points_to_save)
 
-    def _load_robot_config(self) -> None:
-        """Load link configuration from robot_config.yaml"""
-        robot_config_path = self.robot.robot_directory / "robot_config.yaml"
-        with open(robot_config_path, 'r') as f:
-            config = yaml.safe_load(f)
-        link_cfg = config['robot_config']
-        self.tcp_link_name = link_cfg['tcp_link_name']
-        self.eef_links = link_cfg['eef_links']
-        self.eef_visual_links = link_cfg['eef_visual_links']
-        self.arm_visual_links = link_cfg['arm_visual_links']
-        self.arm_links = link_cfg['arm_links']
+    # def _load_robot_config(self) -> None:
+    #     """Load link configuration from robot_config.yaml"""
+    #     robot_config_path = self.robot.robot_directory / "robot_config.yaml"
+    #     with open(robot_config_path, 'r') as f:
+    #         config = yaml.safe_load(f)
+    #     link_cfg = config['robot_config']
+    #     self.tcp_link_name = link_cfg['tcp_link_name']
+    #     self.eef_links = link_cfg['eef_links']
+    #     self.eef_visual_links = link_cfg['eef_visual_links']
+    #     self.arm_visual_links = link_cfg['arm_visual_links']
+    #     self.arm_links = link_cfg['arm_links']
 
     def _initialize_eef_points_and_normals(self, robot: Robot, N: int) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         # Use configured end effector visual links
         links = [
             link
             for link in robot.urdf.links
-            if link.name in set(self.eef_visual_links)
+            if link.name in set(self.robot.eef_visual_link_names)
         ]
         
         meshes = []
@@ -204,25 +204,27 @@ class SamplerBase:
         return True
 
 
-def get_points_on_robot_arm(robot: Robot, 
-                            config: np.ndarray, 
-                            auxiliary_joint_values: Dict[str, float], 
-                            num_points: int, 
+def get_points_on_robot_arm(robot: Robot,
+                            config: np.ndarray,
+                            num_points: int,
                             link_points: Dict[str, np.ndarray],
-                            arm_visual_links: List[str],
+                            auxiliary_joint_values: Optional[Dict[str, float]]=None, 
                             base_pose: np.ndarray = np.eye(4)) -> np.ndarray:
     """
-    Get points on the robot arm.
+    Get points on the robot arm with the given joint configuration.
+
+    Currently not batched.
+
+    Deterministically samples all stored points if num_points = 0.
 
     Args:
         robot (Robot): The robot object.
         config (np.ndarray): The configuration of the robot.
-        auxiliary_joint_values (Dict[str, float]): Dictionary mapping auxiliary 
-            joint names to their values.
         num_points (int): The number of points to sample.
         link_points (Dict[str, np.ndarray]): Dictionary mapping link names to 
             their points.
-        arm_visual_links (List[str]): List of visual links on the robot arm.
+        auxiliary_joint_values (Dict[str, float]): Dictionary mapping auxiliary 
+            joint names to their values.
         base_pose (np.ndarray, optional): The pose of the robot's base link. 
             Defaults to np.eye(4).
 
@@ -230,10 +232,13 @@ def get_points_on_robot_arm(robot: Robot,
         np.ndarray: A numpy array of shape (N, 3) containing the sampled points.
     """
     fk = robot.visual_fk(config, auxiliary_joint_values, base_pose=base_pose)
-    
+    assert len(fk[next(iter(fk))].shape) == 3, "fk results expected to have batch dimension"
+    assert fk[next(iter(fk))].shape[0] == 1, "get_points_on_robot_arm() currently only supports fk batches of size 1"
+
     point_list = [
-        label(transform_in_place(np.copy(link_points[link_name]), fk[link_name]), float(i))
-        for i, link_name in enumerate(arm_visual_links)
+        label(transform_in_place(np.copy(link_points[link_name]), 
+                                 fk[link_name].squeeze()), float(i))
+        for i, link_name in enumerate(robot.arm_visual_link_names)
     ]
     all_points = np.concatenate(point_list, axis=0)
     
@@ -244,10 +249,28 @@ def get_points_on_robot_arm(robot: Robot,
 
 
 def get_points_on_robot_arm_from_poses(robot: Robot,
-                                       poses: Dict[str, np.ndarray], 
-                                       num_points: int, 
+                                       poses: Dict[str, np.ndarray],
+                                       num_points: int,
                                        link_points: Dict[str, np.ndarray]) -> np.ndarray:
+    """
+    Get points on the robot arm with the given link poses.
+
+    Currently not batched.
+
+    Deterministically samples all stored points if num_points = 0.
+
+    Args:
+        robot (Robot): The robot object.
+        poses (np.ndarray): The set of link poses.
+        num_points (int): The number of points to sample.
+        link_points (Dict[str, np.ndarray]): Dictionary mapping link names to 
+            their points.
+
+    Returns:
+        np.ndarray: A numpy array of shape (N, 3) containing the sampled points.
+    """
     assert len(poses) == len(robot.arm_visual_link_names)
+    assert poses[next(iter(poses))].shape == (4,4), "Input poses must be of shape (4,4)"
 
     point_list = [
         label(transform_in_place(np.copy(link_points[link_name]), poses[link_name]), float(i))
@@ -264,28 +287,31 @@ def get_points_on_robot_arm_from_poses(robot: Robot,
 
 def get_points_on_robot_eef(robot: Robot,
                             pose: np.ndarray,
-                            auxiliary_joint_values: Dict[str, float],
-                            frame: str,
                             num_points: int,
-                            link_points: Dict[str, np.ndarray]) -> np.ndarray:
+                            link_points: Dict[str, np.ndarray],
+                            auxiliary_joint_values: Optional[Dict[str, float]]=None,
+                            frame: Optional[str]=None) -> np.ndarray:
     """
     Get points on the robot end effector.
+
+    Deterministically samples all stored points if num_points = 0.
 
     Args:
         robot (Robot): The robot object.
         pose (np.ndarray): Absolute pose of the link with name `frame`.
+        num_points (int): The number of points to sample.
         auxiliary_joint_values (Dict[str, float]): Dictionary mapping auxiliary 
             joint names to their values.
+        frame (str): End effector link name that has pose `pose`.
     """
-    
     fk = robot.eef_visual_fk(pose, frame, auxiliary_joint_values)
+    assert fk[next(iter(fk))].shape == (4,4), "eef visual fk results must be of shape (4,4)"
 
     point_list = [
         label(transform_in_place(np.copy(link_points["eef_" + link_name]), fk[link_name]), float(i))
         for i, link_name in enumerate(robot.eef_visual_link_names)
     ]
     all_points = np.concatenate(point_list, axis=0)
-    
     if num_points > 0:
         return all_points[np.random.choice(all_points.shape[0], num_points, replace=False), :]
     return all_points
@@ -300,32 +326,37 @@ class NumpyRobotSampler(SamplerBase):
         super().__init__(robot, **kwargs)
         self.robot = robot
         
-    def sample(self, 
-        cfg: np.ndarray, 
+    def sample(self,
+        cfg: np.ndarray,
         auxiliary_joint_values: Optional[Dict[str, float]] = None,
         num_points: Optional[int] = None,
     ) -> np.ndarray:
-        """num_points = 0 implies use all points."""
+        """
+        Sample points from the full robot visual mesh surface. Link poses are
+        calculated using forward kinematics, based on the input joint config.
+
+        When num_points = None, all stored points are used, and they are sampled 
+        deterministically (as stored/cached).
+        """
         assert num_points is None or 0 < num_points <= self.num_robot_points
-
-        if auxiliary_joint_values is None:
-            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
-
         return get_points_on_robot_arm(
             self.robot,
             cfg,
-            auxiliary_joint_values,
             num_points or 0,
             self.points,
-            self.arm_visual_links,
+            auxiliary_joint_values
         )
 
-    def sample_from_poses(self, 
-        poses: Dict[str, np.ndarray], 
+    def sample_from_poses(self,
+        poses: Dict[str, np.ndarray],
         num_points: Optional[int] = None,
     ) -> np.ndarray:
         """
-        Sample points from the robot arm based on a batch of link poses.
+        Sample points from the robot arm visual mesh surface based on a batch 
+        of link poses.
+
+        When num_points = None, all stored points are used, and they are sampled 
+        deterministically (as stored/cached).
 
         Args:
             poses (Dict[str, np.ndarray]): A batch of poses.
@@ -346,22 +377,20 @@ class NumpyRobotSampler(SamplerBase):
         frame: Optional[str] = None,
         num_points: Optional[int] = None
     ) -> np.ndarray:
-        """Sample end effector point cloud."""
+        """
+        Sample points from the end effector visual mesh surface.
+
+        When num_points = None, all stored points are used, and they are sampled 
+        deterministically (as stored/cached).
+        """
         assert num_points is None or 0 < num_points <= self.num_eef_points
-
-        if auxiliary_joint_values is None:
-            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
-
-        if frame is None:
-            frame = self.tcp_link_name
-        assert frame in self.robot.fixed_eef_link_transforms, "Other frames not yet suppported"
         return get_points_on_robot_eef(
             self.robot,
             pose,
-            auxiliary_joint_values,
-            frame,
             num_points or 0,
             self.points,
+            auxiliary_joint_values,
+            frame,
         )
 
 
@@ -399,7 +428,14 @@ class TorchRobotSampler(SamplerBase):
             for key, val in self.normals.items()
         }
 
-    def end_effector_pose(self, config, auxiliary_joint_values: Dict[str, float], frame=None):
+    def end_effector_pose(self,
+                          config,
+                          auxiliary_joint_values: Optional[Dict[str, float]]=None, 
+                          frame: Optional[str]=None):
+        """
+        Return the pose of the end effector link `frame` when the robot's 
+        configuration is `config`.
+        """
         if frame is None:
             frame = self.robot.tcp_link_name
         assert frame in self.robot.fixed_eef_link_transforms, "Other frames not yet suppported"
@@ -410,23 +446,38 @@ class TorchRobotSampler(SamplerBase):
 
     def _sample_end_effector(
         self,
-        with_normals,
-        poses,
-        auxiliary_joint_values: Dict[str, float],
-        num_points=None,
-        frame=None,
-        in_place=True,
-    ):
-        if frame is None:
-            frame = self.robot.tcp_link_name
-        assert frame in self.robot.fixed_eef_link_transforms, "Other frames not yet suppported"
+        with_normals: bool,
+        pose: torch.Tensor,
+        auxiliary_joint_values: Optional[Dict[str, float]]=None,
+        num_points: Optional[int]=None,
+        frame: Optional[str]=None,
+        in_place: bool=True,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Sample points from the end effector based on its pose.
+        Args:
+            with_normals (bool): Whether to return normals (returns tuple if so).
+            pose (torch.Tensor): The pose of the end effector link in `frame`.
+                Batched tensor of shape (B, 4, 4).
+            auxiliary_joint_values (Dict[str, float]): Dictionary mapping 
+                auxiliary joint names to their values.
+            num_points (Optional[int]): The number of points to sample.
+            frame (Optional[str]): The link frame in which the pose is defined.
+            only_eff (bool): Whether to sample only the end effector.
+            in_place (bool): Whether to perform the transformation in place.
+        Returns:
+            Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]: A tensor of 
+                shape (B, N, 4) (feature is [x,y,z,link_idx]) containing the 
+                sampled points. If with_normals is True, also returns the 
+                mesh normals at the sampled points.
+        """
         assert num_points is None or 0 < num_points <= self.num_eef_points
-        assert poses.ndim in [2, 3]
+        assert pose.ndim in [2, 3]
         
-        if poses.ndim == 2:
-            poses = poses.unsqueeze(0)
+        if pose.ndim == 2:
+            pose = pose.unsqueeze(0)
         
-        visual_eef_fk = self.robot.eef_fk_torch(poses, frame, auxiliary_joint_values, only_visual=True)
+        visual_eef_fk = self.robot.eef_fk_torch(pose, frame, auxiliary_joint_values, only_visual=True)
 
         fk_points = []
         if with_normals:
@@ -434,7 +485,7 @@ class TorchRobotSampler(SamplerBase):
         
         for link_idx, link_name in enumerate(self.robot.eef_visual_link_names):
             pc = transform_point_cloud(
-                self.points[f"eef_{link_name}"].float().repeat((poses.shape[0], 1, 1)),
+                self.points[f"eef_{link_name}"].float().repeat((pose.shape[0], 1, 1)),
                 visual_eef_fk[link_name],
                 in_place=in_place,
             )
@@ -451,7 +502,7 @@ class TorchRobotSampler(SamplerBase):
                 normals = transform_point_cloud(
                     self.normals[f"eef_{link_name}"]
                     .float()
-                    .repeat((poses.shape[0], 1, 1)),
+                    .repeat((pose.shape[0], 1, 1)),
                     visual_eef_fk[link_name],
                     vector=True,
                     in_place=in_place,
@@ -484,7 +535,7 @@ class TorchRobotSampler(SamplerBase):
 
     def sample_end_effector_with_normals(
         self,
-        poses,
+        pose,
         auxiliary_joint_values: Optional[Dict[str, float]] = None,
         num_points=None,
         frame=None,
@@ -496,7 +547,7 @@ class TorchRobotSampler(SamplerBase):
         assert frame in self.robot.fixed_eef_link_transforms, "Other frames not yet suppported"
         return self._sample_end_effector(
             with_normals=True,
-            poses=poses,
+            pose=pose,
             auxiliary_joint_values=auxiliary_joint_values,
             num_points=num_points,
             frame=frame,
@@ -504,27 +555,45 @@ class TorchRobotSampler(SamplerBase):
 
     def sample_end_effector(
         self,
-        poses,
+        pose,
         auxiliary_joint_values: Optional[Dict[str, float]] = None,
         num_points=None,
         frame=None,
         in_place=True,
     ):
-        if auxiliary_joint_values is None:
-            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
         if frame is None:
             frame = self.robot.tcp_link_name
         assert frame in self.robot.fixed_eef_link_transforms, "Other frames not yet suppported"
         return self._sample_end_effector(
             with_normals=False,
-            poses=poses,
+            pose=pose,
             auxiliary_joint_values=auxiliary_joint_values,
             num_points=num_points,
             frame=frame,
             in_place=in_place,
         )
 
-    def _sample_from_poses(self, with_normals, poses, num_points=None, in_place=True):
+    def _sample_from_poses(self,
+                           with_normals: bool,
+                           poses: Dict[str, torch.Tensor],
+                           num_points: Optional[int]=None,
+                           in_place: bool=True) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Sample points from the robot arm based on a a set of link poses 
+        (no FK needed).
+        Args:
+            with_normals (bool): Whether to return normals (returns tuple if so).
+            poses (Dict[str, torch.Tensor]): The configuration of the robot.
+            auxiliary_joint_values (Dict[str, float]): Dictionary mapping 
+                auxiliary joint names to their values.
+            num_points (Optional[int]): The number of points to sample.
+            in_place (bool): Whether to perform the transformation in place.
+        Returns:
+            Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]: A tensor of 
+                shape (B, N, 4) (feature is [x,y,z,link_idx]) containing the 
+                sampled points. If with_normals is True, also returns the 
+                mesh normals at the sampled points.
+        """
         points = []
         if with_normals:
             normals = []
@@ -582,17 +651,33 @@ class TorchRobotSampler(SamplerBase):
 
     def _sample(
         self,
-        with_normals,
-        config,
-        auxiliary_joint_values: Dict[str, float],
+        with_normals: bool,
+        config: torch.Tensor,
+        auxiliary_joint_values: Optional[Dict[str, float]]=None,
         num_points=None,
         only_eff=False,
         in_place=True,
-    ):
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Sample points from the robot arm based on a configuration.
+        Args:
+            with_normals (bool): Whether to return normals (returns tuple if so).
+            config (torch.Tensor): The configuration of the robot.
+            auxiliary_joint_values (Dict[str, float]): Dictionary mapping 
+                auxiliary joint names to their values.
+            num_points (Optional[int]): The number of points to sample.
+            only_eff (bool): Whether to sample only the end effector.
+            in_place (bool): Whether to perform the transformation in place.
+        Returns:
+            Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]: A tensor of 
+                shape (B, N, 4) (feature is [x,y,z,link_idx]) containing the 
+                sampled points. If with_normals is True, also returns the 
+                mesh normals at the sampled points.
+        """
         if config.ndim == 1:
             config = config.unsqueeze(0)
 
-        fk = self.robot.visual_fk(config, auxiliary_joint_values)
+        fk = self.robot.visual_fk_torch(config, auxiliary_joint_values)
         fk_points = []
         if with_normals:
             fk_normals = []
@@ -656,8 +741,6 @@ class TorchRobotSampler(SamplerBase):
         only_eff=False,
         in_place=True
     ):
-        if auxiliary_joint_values is None:
-            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
         return self._sample(
             with_normals=False,
             config=config,
@@ -671,7 +754,12 @@ class TorchRobotSampler(SamplerBase):
         return self._sample_from_poses(False, poses, num_points=None, in_place=in_place)
 
     def sample_with_normals(
-        self, config, auxiliary_joint_values: Dict[str, float], num_points=None, only_eff=False, in_place=True
+        self,
+        config,
+        auxiliary_joint_values: Optional[Dict[str, float]]=None,
+        num_points=None,
+        only_eff=False,
+        in_place=True
     ):
         return self._sample(
             with_normals=True,
