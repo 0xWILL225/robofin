@@ -32,9 +32,6 @@ class SamplerBase:
         self.with_base_link = with_base_link
         self.num_robot_points = num_robot_points
         self.num_eef_points = num_eef_points
-        
-        # Load link configuration
-        # self._load_robot_config()
 
         if use_cache and self._init_from_cache_():
             return
@@ -65,18 +62,6 @@ class SamplerBase:
             file_name = self._get_cache_file_name_()
             print(f"Saving new file to cache: {file_name}")
             np.save(file_name, points_to_save)
-
-    # def _load_robot_config(self) -> None:
-    #     """Load link configuration from robot_config.yaml"""
-    #     robot_config_path = self.robot.robot_directory / "robot_config.yaml"
-    #     with open(robot_config_path, 'r') as f:
-    #         config = yaml.safe_load(f)
-    #     link_cfg = config['robot_config']
-    #     self.tcp_link_name = link_cfg['tcp_link_name']
-    #     self.eef_links = link_cfg['eef_links']
-    #     self.eef_visual_links = link_cfg['eef_visual_links']
-    #     self.arm_visual_links = link_cfg['arm_visual_links']
-    #     self.arm_links = link_cfg['arm_links']
 
     def _initialize_eef_points_and_normals(self, robot: Robot, N: int) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         # Use configured end effector visual links
@@ -180,7 +165,7 @@ class SamplerBase:
         # TEMPORARY: Use the same cache location as the original Franka sampler for testing compatibility
         # This ensures both samplers load from the exact same cache file during testing
         # TODO: Once testing is complete, remove this and use robot-specific cache directories
-        cprint(f"NOTE: Temporarily using hardcoded Franka point cloud cache", "yellow")
+        cprint(f"NOTE: Temporarily using hardcoded Franka point cloud cache path", "yellow")
         return (
             FrankaConstants.point_cloud_cache
             / f"franka_point_cloud_{self.num_robot_points}_{self.num_eef_points}.npy"
@@ -296,6 +281,8 @@ def get_points_on_robot_eef(robot: Robot,
 
     Deterministically samples all stored points if num_points = 0.
 
+    Currently does not support a batch dimension that isn't 1.
+
     Args:
         robot (Robot): The robot object.
         pose (np.ndarray): Absolute pose of the link with name `frame`.
@@ -304,8 +291,11 @@ def get_points_on_robot_eef(robot: Robot,
             joint names to their values.
         frame (str): End effector link name that has pose `pose`.
     """
+    if pose.ndim == 3:
+        assert pose.shape[0] <= 1, "Batch dim greater than 1 not supported"
+        pose = pose.squeeze()
+    assert pose.ndim == 2, "pose.ndim must be 2: (4,4)"
     fk = robot.eef_visual_fk(pose, frame, auxiliary_joint_values)
-    assert fk[next(iter(fk))].shape == (4,4), "eef visual fk results must be of shape (4,4)"
 
     point_list = [
         label(transform_in_place(np.copy(link_points["eef_" + link_name]), fk[link_name]), float(i))
@@ -325,7 +315,7 @@ class NumpyRobotSampler(SamplerBase):
     def __init__(self, robot: Robot, **kwargs):
         super().__init__(robot, **kwargs)
         self.robot = robot
-        
+
     def sample(self,
         cfg: np.ndarray,
         auxiliary_joint_values: Optional[Dict[str, float]] = None,
@@ -486,7 +476,7 @@ class TorchRobotSampler(SamplerBase):
         for link_idx, link_name in enumerate(self.robot.eef_visual_link_names):
             pc = transform_point_cloud(
                 self.points[f"eef_{link_name}"].float().repeat((pose.shape[0], 1, 1)),
-                visual_eef_fk[link_name],
+                visual_eef_fk[link_name].float(),
                 in_place=in_place,
             )
             fk_points.append(
@@ -503,7 +493,7 @@ class TorchRobotSampler(SamplerBase):
                     self.normals[f"eef_{link_name}"]
                     .float()
                     .repeat((pose.shape[0], 1, 1)),
-                    visual_eef_fk[link_name],
+                    visual_eef_fk[link_name].float(),
                     vector=True,
                     in_place=in_place,
                 )
@@ -537,14 +527,9 @@ class TorchRobotSampler(SamplerBase):
         self,
         pose,
         auxiliary_joint_values: Optional[Dict[str, float]] = None,
-        num_points=None,
-        frame=None,
+        num_points: Optional[int]=None,
+        frame: Optional[str]=None,
     ):
-        if auxiliary_joint_values is None:
-            auxiliary_joint_values = self.robot.auxiliary_joint_defaults
-        if frame is None:
-            frame = self.robot.tcp_link_name
-        assert frame in self.robot.fixed_eef_link_transforms, "Other frames not yet suppported"
         return self._sample_end_effector(
             with_normals=True,
             pose=pose,
@@ -555,15 +540,12 @@ class TorchRobotSampler(SamplerBase):
 
     def sample_end_effector(
         self,
-        pose,
+        pose: torch.Tensor,
         auxiliary_joint_values: Optional[Dict[str, float]] = None,
-        num_points=None,
-        frame=None,
-        in_place=True,
+        num_points: Optional[int]=None,
+        frame: Optional[str]=None,
+        in_place: bool=True,
     ):
-        if frame is None:
-            frame = self.robot.tcp_link_name
-        assert frame in self.robot.fixed_eef_link_transforms, "Other frames not yet suppported"
         return self._sample_end_effector(
             with_normals=False,
             pose=pose,
@@ -604,7 +586,7 @@ class TorchRobotSampler(SamplerBase):
                 self.points[link_name]
                 .float()
                 .repeat((poses[link_name].shape[0], 1, 1)),
-                poses[link_name],
+                poses[link_name].float(),
                 in_place=in_place,
             )
             points.append(
@@ -621,7 +603,7 @@ class TorchRobotSampler(SamplerBase):
                     self.normals[link_name]
                     .float()
                     .repeat((poses[link_name].shape[0], 1, 1)),
-                    poses[link_name],
+                    poses[link_name].float(),
                     vector=True,
                     in_place=in_place,
                 )
@@ -688,7 +670,7 @@ class TorchRobotSampler(SamplerBase):
                 continue
             pc = transform_point_cloud(
                 self.points[link_name].float().repeat((fk[link_name].shape[0], 1, 1)),
-                fk[link_name],
+                fk[link_name].float(),
                 in_place=in_place,
             )
             fk_points.append(
@@ -705,7 +687,7 @@ class TorchRobotSampler(SamplerBase):
                     self.normals[link_name]
                     .float()
                     .repeat((fk[link_name].shape[0], 1, 1)),
-                    fk[link_name],
+                    fk[link_name].float(),
                     vector=True,
                     in_place=in_place,
                 )
@@ -751,7 +733,7 @@ class TorchRobotSampler(SamplerBase):
         )
 
     def sample_from_poses(self, poses, num_points=None, in_place=True):
-        return self._sample_from_poses(False, poses, num_points=None, in_place=in_place)
+        return self._sample_from_poses(False, poses, num_points=num_points, in_place=in_place)
 
     def sample_with_normals(
         self,

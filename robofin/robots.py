@@ -20,10 +20,10 @@ from robofin.point_cloud_tools import transform_point_cloud
 
 class Robot:
     """
-    Main Robot class for any manipulator.
+    Stateless class that provides helpful methods for a robot defined in a URDF.
     """
     
-    def __init__(self, 
+    def __init__(self,
                  urdf_path: Union[str, Path],
                  device: str = 'cpu'):
         """
@@ -40,18 +40,20 @@ class Robot:
         self.robot_directory = Path(urdf_path).parent
         self.device = device
         self.urdf = urchin.URDF.load(str(self.urdf_path), lazy_load_meshes=True)
-        self.torch_urdf = TorchURDF.load(str(self.urdf_path), lazy_load_meshes=True, device=self.device)
+        self.torch_urdf = TorchURDF.load(str(self.urdf_path), 
+                                         lazy_load_meshes=True, 
+                                         device=self.device)
         self.include_base_link_spheres = False  # influences what compute_spheres() returns
-        
+
         # Load robot configuration from robot_config.yaml
         self._load_robot_config()
 
         # Load collision spheres from collision_spheres/
         self._load_collision_spheres()
-        
+
         # Extract robot properties from URDF
         self._extract_robot_properties()
-    
+
     def _load_robot_config(self):
         """Load robot configuration from robot_config.yaml"""
         robot_config_path = self.robot_directory / "robot_config.yaml"
@@ -236,27 +238,55 @@ class Robot:
         Returns:
             4x4 transform matrix for the visual origin
         """
-        # Find the link in URDF
         link = None
         for l in self.urdf.links:
             if l.name == link_name:
                 link = l
                 break
-        
+
         if link is None or not link.visuals:
             cprint(f"get_visual_transform() | Warning: No visual found for link {link_name}", "yellow")
             return np.eye(4)
-        
-        # Get the first visual element
-        visual = link.visuals[0]
-        
+
+        visual = link.visuals[0] # first visual element (assumed only)
         if hasattr(visual, 'origin') and visual.origin is not None:
-            # Urchin already processes the origin into a 4x4 matrix
             return np.asarray(visual.origin, dtype=np.float64)
-        
+
         cprint(f"get_visual_transform() | Warning: No visual origin found for link {link_name}", "yellow")
         return np.eye(4)
     
+    def torch_get_visual_transform(self,
+                                   link_name: str,
+                                   dtype: Optional[torch.dtype]=None) -> torch.Tensor:
+        """
+        Get visual transform for a link from URDF.
+        
+        Args:
+            link_name: Name of the link
+            
+        Returns:
+            4x4 transform matrix for the visual origin
+        """
+        link = None
+        for l in self.torch_urdf.links:
+            if l.name == link_name:
+                link = l
+                break
+
+        if link is None or not link.visuals:
+            cprint(f"torch_get_visual_transform() | Warning: No visual found for link {link_name}", "yellow")
+            return torch.eye(4)
+
+        visual = link.visuals[0] # first visual element (assumed only)
+        if hasattr(visual, 'origin') and visual.origin is not None:
+            return torch.as_tensor(visual.origin,
+                                   dtype=dtype if dtype is not None else torch.float64,
+                                   device=self.device)
+
+        cprint(f"torch_get_visual_transform() | Warning: No visual origin found for link {link_name}", "yellow")
+        return torch.eye(4)
+
+
     def within_limits(self, config):
         """Check if configuration is within joint limits"""
         # Handle both main manipulator and full robot configs
@@ -645,18 +675,23 @@ class Robot:
         """
         Forward kinematics for the end effector links (numpy version).
 
-        Currently not batched.
+        B is batch dimension.
+
+        NOTE: An assumption is made that any joints between end-effector links
+        are part of the auxiliary joints. All main joints are assumed to be
+        before any end-effector link in the kinematic chain.
 
         Args:
-            pose: np.ndarray of shape (4, 4), the pose of the link with name `frame`
+            pose: np.ndarray of shape (B, 4, 4) or (4, 4), the pose of the link 
+                with name `frame`
             frame: str, link that is the reference frame for the pose
             auxiliary_joint_values: Dict[str, float], a map from auxiliary 
                 joint names to values
 
         Returns:
             fk_result: Dict[str, np.ndarray], keys are link names, values are 
-            poses of shape (4, 4). The absolute transforms of the links 
-            belonging to the end effector.
+            poses of shape (B, 4, 4) or (4, 4) (matches input). The absolute 
+            transforms of the links belonging to the end effector.
         """
         if frame is None:
             frame = self.tcp_link_name
@@ -668,11 +703,11 @@ class Robot:
         fk_result = {}
         fk_result[frame] = pose
         tcp_to_frame = self.fixed_eef_link_transforms[frame]
-        tcp_absolute_pose = np.matmul(np.linalg.inv(tcp_to_frame), pose)
+        tcp_absolute_pose = np.matmul(pose, np.linalg.inv(tcp_to_frame))
         for link_name, tcp_to_link in self.fixed_eef_link_transforms.items():
             if link_name == frame:
                 continue
-            fk_result[link_name] = np.matmul(tcp_to_link, tcp_absolute_pose)
+            fk_result[link_name] = np.matmul(tcp_absolute_pose, tcp_to_link)
 
         # add auxiliary jointed links ("fingers") to the fk_result
         for parent_link, joint_child_pairs in self.eef_aux_joints.items():
@@ -681,8 +716,9 @@ class Robot:
                 for joint, child_link in joint_child_pairs:
                     if joint.name in auxiliary_joint_values:
                         joint_value = auxiliary_joint_values[joint.name]
-                        joint_transform = self._get_joint_transform(joint, joint_value)
-                        child_pose = np.matmul(joint_transform, parent_pose)
+                        joint_transform = self._get_joint_transform(joint, 
+                                                                    joint_value)
+                        child_pose = np.matmul(parent_pose, joint_transform)
                         fk_result[child_link] = child_pose
 
 
@@ -720,14 +756,17 @@ class Robot:
 
         fk_result = {}
         fk_result[frame] = pose
-        tcp_to_frame = self.torch_fixed_eef_link_transforms[frame].to(dtype=pose.dtype, device=pose.device)
-        tcp_absolute_pose = torch.matmul(torch.linalg.inv(tcp_to_frame), pose)
+        tcp_to_frame = self.torch_fixed_eef_link_transforms[frame].to(
+            dtype=pose.dtype, device=pose.device)
+        tcp_absolute_pose = torch.matmul(pose, torch.linalg.inv(tcp_to_frame))
         for link_name, tcp_to_link in self.torch_fixed_eef_link_transforms.items():
             if only_visual and link_name not in self.eef_visual_link_names:
                 continue
             if link_name == frame:
                 continue
-            fk_result[link_name] = torch.matmul(tcp_to_link, tcp_absolute_pose)
+            fk_result[link_name] = torch.matmul(tcp_absolute_pose,
+                                                tcp_to_link.to(dtype=pose.dtype, 
+                                                               device=pose.device))
 
         # add auxiliary jointed links ("fingers") to the fk_result
         for parent_link, joint_child_pairs in self.eef_aux_joints.items():
@@ -738,8 +777,10 @@ class Robot:
                         continue
                     if joint.name in auxiliary_joint_values:
                         joint_value = auxiliary_joint_values[joint.name]
-                        joint_transform = torch.as_tensor(self._get_joint_transform(joint, joint_value), device=pose.device, dtype=pose.dtype)
-                        child_pose = torch.matmul(joint_transform, parent_pose)
+                        joint_transform = torch.as_tensor(
+                            self._get_joint_transform(joint, joint_value), 
+                            device=pose.device, dtype=pose.dtype)
+                        child_pose = torch.matmul(parent_pose, joint_transform)
                         fk_result[child_link] = child_pose
 
         return fk_result
@@ -751,31 +792,30 @@ class Robot:
     ) -> Dict[str, np.ndarray]:
         """
         Forward kinematics for the end effector's links with visual meshes (numpy version).
-
-        Currently not batched.
         
+        B is batch dimension.
+
+        NOTE: Also applies visual transform of the mesh as stored in the urdf
+
         Args:
-            pose: np.ndarray of shape (4, 4), the pose of the link with name `frame`
+            pose: np.ndarray of shape (B, 4, 4) or (4, 4), the pose of the link with name `frame`
             frame: str, link that is the reference frame for the pose
             auxiliary_joint_values: Dict[str, float], a map from auxiliary 
                 joint names to values
 
         Returns:
             fk_result: Dict[str, np.ndarray], keys are link names, values are 
-            poses of shape (4, 4). The absolute transforms of the links 
-            belonging to the end effector with visual meshes.
+            poses of shape (B, 4, 4) or (4, 4) (matches input). The absolute 
+            transforms of the links belonging to the end effector with visual meshes.
 
         """
-        if frame is None:
-            frame = self.tcp_link_name
-        if frame not in self.torch_fixed_eef_link_transforms:
-            raise ValueError(f"Frame {frame} is not a valid end effector frame (must be a link fixed to tcp)")
-
         fk_result = self.eef_fk(pose, frame, auxiliary_joint_values)
         fk_visual_result = {}
         for link_name, link_pose in fk_result.items():
             if link_name in self.eef_visual_link_names:
-                fk_visual_result[link_name] = link_pose
+                vis_transform: np.ndarray = self.get_visual_transform(link_name)
+                # fk_visual_result[link_name] = link_pose
+                fk_visual_result[link_name] = np.matmul(link_pose, vis_transform)
         return fk_visual_result
 
 
@@ -787,6 +827,8 @@ class Robot:
         """
         Forward kinematics for the end effector's links with visual meshes (torch version).
         
+        NOTE: Also applies visual transform of the mesh as stored in the urdf
+
         Args:
             pose: torch.Tensor of shape (batch_size, 4, 4), the pose of the link with name `frame`
             frame: str, link that is the reference frame for the pose
@@ -807,7 +849,8 @@ class Robot:
         fk_visual_result = {}
         for link_name, link_pose in fk_result.items():
             if link_name in self.eef_visual_link_names:
-                fk_visual_result[link_name] = link_pose
+                vis_transform: torch.Tensor = self.torch_get_visual_transform(link_name)
+                fk_visual_result[link_name] = torch.matmul(link_pose, vis_transform)
         return fk_visual_result
 
     def ik(self, pose, fixed_joint_value, eff_frame=None, joint_range_scalar=1.0):

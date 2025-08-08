@@ -96,7 +96,8 @@ def franka_eef_link_fk(prismatic_joint: float, base_pose: np.ndarray) -> np.ndar
     # panda_grasptarget is attached via fixed joint to panda_hand
     poses[2, :, :] = np.dot(poses[1], joint_origins[1])
     # right_gripper is attached via fixed joint to panda_link8
-    poses[3, :, :] = np.dot(poses[0], joint_origins[0])
+    # poses[3, :, :] = np.dot(poses[0], joint_origins[0])
+    poses[3, :, :] = np.dot(poses[0], joint_origins[2])
 
     # panda_leftfinger is a prismatic joint connected to panda_hand
     t_leftfinger = np.eye(4)
@@ -460,7 +461,6 @@ def eef_pose_to_link8(pose, frame):
         )
     return pose
 
-
 @numba.jit(nopython=True, cache=True)
 def get_points_on_franka_eef(
     pose,
@@ -473,6 +473,7 @@ def get_points_on_franka_eef(
 ):
     lnk8_pose = eef_pose_to_link8(pose, frame)
     fk = franka_eef_visual_fk(prismatic_joint, lnk8_pose)
+
     all_points = np.concatenate(
         (
             label(transform_in_place(np.copy(panda_hand_points), fk[0]), 0.0),
