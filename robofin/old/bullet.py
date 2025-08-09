@@ -6,8 +6,8 @@ import pybullet as p
 import trimesh
 from geometrout import SE3, Cuboid, Cylinder, Sphere
 
-from robofin.point_cloud_tools import transform_point_cloud
-from robofin.robots import FrankaGripper, FrankaRobot
+from robofin.old.point_cloud_tools import transform_point_cloud
+from robofin.old.robots import FrankaGripper, FrankaRobot
 
 
 class BulletRobot:

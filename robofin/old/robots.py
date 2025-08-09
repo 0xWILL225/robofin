@@ -2,7 +2,7 @@ import numpy as np
 from geometrout import SE3
 from ikfast_franka_panda import get_fk, get_ik
 
-from robofin.robot_constants import (
+from robofin.old.robot_constants import (
     FrankaConstants,
     FrankaGripperConstants,
     RealFrankaConstants,

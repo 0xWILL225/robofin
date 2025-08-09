@@ -7,10 +7,12 @@ import trimesh
 import urchin
 from geometrout.primitive import Sphere
 
-from robofin.kinematics.numba import get_points_on_franka_arm, get_points_on_franka_arm_from_poses, get_points_on_franka_eef
-from robofin.point_cloud_tools import transform_point_cloud
-from robofin.robot_constants import FrankaConstants
-from robofin.torch_urdf import TorchURDF
+from robofin.old.point_cloud_tools import transform_point_cloud
+from robofin.old.robot_constants import FrankaConstants
+from robofin.old.torch_urdf import TorchURDF
+
+from robofin.old.kinematics.numba import get_points_on_franka_arm, get_points_on_franka_arm_from_poses, get_points_on_franka_eef
+
 
 
 class SamplerBase:

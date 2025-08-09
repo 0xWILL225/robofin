@@ -8,8 +8,8 @@ from geometrout import SE3, SO3
 from geometrout.primitive import Cuboid, Cylinder, Sphere
 from pyribbit.material import MetallicRoughnessMaterial
 
-from robofin.collision import FrankaCollisionSpheres
-from robofin.robot_constants import FrankaConstants
+from robofin.old.collision import FrankaCollisionSpheres
+from robofin.old.robot_constants import FrankaConstants
 
 
 def rgb_to_hex(rgb):

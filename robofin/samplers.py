@@ -1,22 +1,20 @@
 import logging
 from pathlib import Path
-import yaml
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Dict, Optional, Union, Tuple
 
 import numpy as np
+import numba as nb
 import torch
 import trimesh
-import urchin
-from geometrout.primitive import Sphere
 from geometrout.maths import transform_in_place
-from termcolor import cprint
 
-from robofin.kinematics.numba import label
-from robofin.robot_constants import FrankaConstants
 from robofin.point_cloud_tools import transform_point_cloud
 from robofin.robots import Robot
-from robofin.torch_urdf import TorchURDF
 
+@nb.jit(nopython=True, cache=True)
+def label(array, lbl):
+    """Used for adding label feature to points in point clouds"""
+    return np.concatenate((array, lbl * np.ones((array.shape[0], 1))), axis=1)
 
 class SamplerBase:
     def __init__(
@@ -25,6 +23,7 @@ class SamplerBase:
         num_robot_points=4096,
         num_eef_points=128,
         use_cache=True,
+        cache_file_path: Optional[str | Path]=None,
         with_base_link=True,
     ):
         logging.getLogger("trimesh").setLevel("ERROR")
@@ -32,12 +31,11 @@ class SamplerBase:
         self.with_base_link = with_base_link
         self.num_robot_points = num_robot_points
         self.num_eef_points = num_eef_points
+        self.cache_file_path = cache_file_path
 
         if use_cache and self._init_from_cache_():
             return
 
-        # If we made it all the way here with the use_cache flag set,
-        # then we should be creating new cache files locally
         link_points, link_normals = self._initialize_robot_points(
             robot, num_robot_points
         )
@@ -105,8 +103,8 @@ class SamplerBase:
         links = [
             link
             for link in robot.urdf.links
-            if len(link.visuals) > 0 and 
-               hasattr(link.visuals[0].geometry, 'mesh') and 
+            if len(link.visuals) > 0 and
+               hasattr(link.visuals[0].geometry, 'mesh') and
                link.visuals[0].geometry.mesh is not None
         ]
 
@@ -162,18 +160,13 @@ class SamplerBase:
         return normals
 
     def _get_cache_file_name_(self):
-        # TEMPORARY: Use the same cache location as the original Franka sampler for testing compatibility
-        # This ensures both samplers load from the exact same cache file during testing
-        # TODO: Once testing is complete, remove this and use robot-specific cache directories
-        cprint(f"NOTE: Temporarily using hardcoded Franka point cloud cache path", "yellow")
+        if self.cache_file_path is not None:
+            return Path(self.cache_file_path)
+
         return (
-            FrankaConstants.point_cloud_cache
-            / f"franka_point_cloud_{self.num_robot_points}_{self.num_eef_points}.npy"
+            self.robot.robot_directory / "point_cloud_cache" 
+            / f"robot_point_cloud_{self.num_robot_points}_{self.num_eef_points}.npy"
         )
-        # return (
-        #     self.robot.robot_directory / "point_cloud_cache" 
-        #     / f"robot_point_cloud_{self.num_robot_points}_{self.num_eef_points}.npy"
-        # )
 
     def _init_from_cache_(self):
         file_name = self._get_cache_file_name_()
@@ -402,11 +395,17 @@ class TorchRobotSampler(SamplerBase):
         num_robot_points=4096,
         num_eef_points=128,
         use_cache=True,
+        cache_file_path: Optional[str | Path]=None,
         with_base_link=True,
         device="cpu",
     ):
         logging.getLogger("trimesh").setLevel("ERROR")
-        super().__init__(robot, num_robot_points, num_eef_points, use_cache, with_base_link)
+        super().__init__(robot,
+                         num_robot_points,
+                         num_eef_points,
+                         use_cache,
+                         cache_file_path,
+                         with_base_link)
         self.robot = robot
         self.links = [l for l in self.robot.torch_urdf.links if len(l.visuals)]
         self.points = {
@@ -467,13 +466,13 @@ class TorchRobotSampler(SamplerBase):
         if pose.ndim == 2:
             pose = pose.unsqueeze(0)
         
-        visual_eef_fk = self.robot.eef_fk_torch(pose, frame, auxiliary_joint_values, only_visual=True)
+        visual_eef_fk = self.robot.eef_visual_fk_torch(pose, frame, auxiliary_joint_values)
 
         fk_points = []
         if with_normals:
             fk_normals = []
         
-        for link_idx, link_name in enumerate(self.robot.eef_visual_link_names):
+        for link_idx, link_name in enumerate(visual_eef_fk):
             pc = transform_point_cloud(
                 self.points[f"eef_{link_name}"].float().repeat((pose.shape[0], 1, 1)),
                 visual_eef_fk[link_name].float(),

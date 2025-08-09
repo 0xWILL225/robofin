@@ -114,6 +114,9 @@ def test_deterministic_numpy_sampling():
 
 
 def test_deterministic_torch_sampling():
+    """
+    Test that two torch samplers with the same parameters produce the same samples.
+    """
     sampler1 = samplers.TorchRobotSampler(
         robot,
         num_robot_points=4096,
@@ -147,6 +150,10 @@ def test_deterministic_torch_sampling():
 
 
 def test_deterministic_compare():
+    """
+    Test that torch and numpy based samplers produce the same results when 
+    sampling deterministically, using the same cache.
+    """
     sampler1 = samplers.NumpyRobotSampler(
         robot,
         num_robot_points=4096,
@@ -175,35 +182,54 @@ def test_deterministic_compare():
     assert compare_point_clouds(eef_samples1, eef_samples2.squeeze().numpy())
 
 
-from robofin import samplers_original as old_samplers
-from robofin.robot_constants import FrankaConstants
-from robofin.robots_original import FrankaRobot
+from robofin.old import samplers as old_samplers
+from robofin.old.robot_constants import FrankaConstants
+from robofin.old.robots import FrankaRobot
 
+franka_robot = Robot("/workspace/assets/panda/panda.urdf")
 
 def test_compare_with_original_samplers():
+    """
+    Test that the old Franka Panda specific samplers produce identical results
+    to the new generic implementation, given that the franka panda urdf is used
+    to instanciate the robot class, and that the same cache is used.
+    """
+
+    n_robot_pts = 4096
+    n_eef_pts = 128
+
+    franka_cache_file_path = FrankaConstants.point_cloud_cache / f"franka_point_cloud_{n_robot_pts}_{n_eef_pts}.npy"
     np_sampler = samplers.NumpyRobotSampler(
-        robot,
-        num_robot_points=4096,
-        num_eef_points=128,
+        franka_robot,
+        num_robot_points=n_robot_pts,
+        num_eef_points=n_eef_pts,
         use_cache=True,
+        cache_file_path=franka_cache_file_path,
         with_base_link=True,
     )
     torch_sampler = samplers.TorchRobotSampler(
-        robot,
-        num_robot_points=4096,
-        num_eef_points=128,
+        franka_robot,
+        num_robot_points=n_robot_pts,
+        num_eef_points=n_eef_pts,
         use_cache=True,
+        cache_file_path=franka_cache_file_path,
         with_base_link=True,
     )
     old_np_sampler = old_samplers.NumpyFrankaSampler(
-        num_robot_points=4096, num_eef_points=128, use_cache=True, with_base_link=True
+        num_robot_points=n_robot_pts,
+        num_eef_points=n_eef_pts,
+        use_cache=True,
+        with_base_link=True
     )
     old_torch_sampler = old_samplers.TorchFrankaSampler(
-        num_robot_points=4096, num_eef_points=128, use_cache=True, with_base_link=True
+        num_robot_points=n_robot_pts,
+        num_eef_points=n_eef_pts,
+        use_cache=True,
+        with_base_link=True
     )
 
-    np_samples = np_sampler.sample(robot.neutral_config)
-    torch_samples = torch_sampler.sample(torch.as_tensor(robot.neutral_config))
+    np_samples = np_sampler.sample(franka_robot.neutral_config)
+    torch_samples = torch_sampler.sample(torch.as_tensor(franka_robot.neutral_config))
     old_np_samples = old_np_sampler.sample(
         FrankaConstants.NEUTRAL,
         0.04,
@@ -219,13 +245,13 @@ def test_compare_with_original_samplers():
         torch_samples.squeeze().numpy(), old_torch_samples.squeeze().numpy()
     )
 
-    neutral_fk = robot.fk(robot.neutral_config)
-    eef_pose = neutral_fk[robot.tcp_link_name]
+    neutral_fk = franka_robot.fk(franka_robot.neutral_config)
+    eef_pose = neutral_fk[franka_robot.tcp_link_name]
     old_eef_pose = FrankaRobot.fk(FrankaConstants.NEUTRAL).matrix
 
     assert np.allclose(eef_pose, old_eef_pose)
 
-    frame = robot.tcp_link_name
+    frame = franka_robot.tcp_link_name
     np_eef_samples = np_sampler.sample_end_effector(eef_pose, frame=frame)
     torch_eef_samples = torch_sampler.sample_end_effector(torch.as_tensor(eef_pose), frame=frame)
     old_np_eef_samples = old_np_sampler.sample_end_effector(old_eef_pose, 0.04, frame=frame)

@@ -1,10 +1,10 @@
 import numpy as np
 import torch
 
-import robofin.kinematics.numba as rkn
-from robofin import samplers_original as samplers
-from robofin.robot_constants import FrankaConstants
-from robofin.robots_original import FrankaRobot
+import robofin.old.kinematics.numba as rkn
+from old import samplers as samplers
+from old.robot_constants import FrankaConstants
+from old.robots import FrankaRobot
 from robofin.torch_urdf import TorchURDF
 
 

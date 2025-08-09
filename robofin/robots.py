@@ -4,25 +4,26 @@ Generic Robot class to replace all robot-specific classes.
 Uses urchin URDF for robot-agnostic kinematics and dynamics.
 """
 
+from pathlib import Path
+from typing import Union, Optional, Dict, List, Tuple
+from collections import OrderedDict, deque
+
 import json
 import yaml
 import numpy as np
 import torch
 import urchin
-from scipy.spatial.transform import Rotation
-from pathlib import Path
-from typing import Union, Optional, Dict, List, Tuple
-from collections import OrderedDict, deque
-from .torch_urdf import TorchURDF
 from termcolor import cprint
+from scipy.spatial.transform import Rotation
 
 from robofin.point_cloud_tools import transform_point_cloud
+from .torch_urdf import TorchURDF
+
 
 class Robot:
     """
     Stateless class that provides helpful methods for a robot defined in a URDF.
     """
-    
     def __init__(self,
                  urdf_path: Union[str, Path],
                  device: str = 'cpu'):
@@ -40,8 +41,8 @@ class Robot:
         self.robot_directory = Path(urdf_path).parent
         self.device = device
         self.urdf = urchin.URDF.load(str(self.urdf_path), lazy_load_meshes=True)
-        self.torch_urdf = TorchURDF.load(str(self.urdf_path), 
-                                         lazy_load_meshes=True, 
+        self.torch_urdf = TorchURDF.load(str(self.urdf_path),
+                                         lazy_load_meshes=True,
                                          device=self.device)
         self.include_base_link_spheres = False  # influences what compute_spheres() returns
 
@@ -280,7 +281,7 @@ class Robot:
         visual = link.visuals[0] # first visual element (assumed only)
         if hasattr(visual, 'origin') and visual.origin is not None:
             return torch.as_tensor(visual.origin,
-                                   dtype=dtype if dtype is not None else torch.float64,
+                                   dtype=dtype if dtype is not None else torch.float32,
                                    device=self.device)
 
         cprint(f"torch_get_visual_transform() | Warning: No visual origin found for link {link_name}", "yellow")
@@ -427,24 +428,6 @@ class Robot:
                 np.ndarrays of shape (batch_size, 4, 4) (map with poses for all 
                 links).
         """
-        # if auxiliary_joint_values is None:
-        #     auxiliary_joint_values = self.auxiliary_joint_defaults
-        # if config.ndim == 1:
-        #     config = config[None, :]
-        # batch_size = config.shape[0]
-        # full_config = np.zeros((batch_size, self.DOF), dtype=config.dtype)
-        # input_config_idx = 0
-        # for i, joint in enumerate(self.urdf.actuated_joints):
-        #     if joint.name in self.main_joint_names:
-        #         full_config[:, i] = config[:, input_config_idx]
-        #         input_config_idx += 1
-        #     elif joint.name in self.auxiliary_joint_names:
-        #         full_config[:, i] = auxiliary_joint_values[joint.name]
-        #     else:
-        #         raise ValueError(f"Unknown actuated joint: {joint.name}")
-        # assert input_config_idx == self.MAIN_DOF
-        # assert full_config.shape == (batch_size, self.DOF)
-        
         full_config = self._construct_full_config(config, auxiliary_joint_values)
 
         if link_name is None:
@@ -484,24 +467,6 @@ class Robot:
             or if link_name is None, a Dict[str, Tensor] with Tensors of shape 
             (batch_size, 4, 4) (map with poses for all links).
         """
-        # if auxiliary_joint_values is None:
-        #     auxiliary_joint_values = self.auxiliary_joint_defaults
-        # if config.dim() == 1:
-        #     config = config.unsqueeze(0)
-        # batch_size = config.shape[0] # n
-        # full_config = torch.zeros((batch_size, self.DOF), dtype=config.dtype, device=config.device)
-        # input_config_idx = 0
-        # for i, joint in enumerate(self.urdf.actuated_joints):
-        #     if joint.name in self.main_joint_names:
-        #         full_config[:, i] = config[:, input_config_idx]
-        #         input_config_idx += 1
-        #     elif joint.name in self.auxiliary_joint_names:
-        #         full_config[:, i] = auxiliary_joint_values[joint.name]
-        #     else:
-        #         raise ValueError(f"Unknown actuated joint: {joint.name}")
-        # assert input_config_idx == self.MAIN_DOF
-        # assert full_config.shape == (batch_size, self.DOF)
-
         full_config = self._torch_construct_full_config(config, auxiliary_joint_values)
 
         fk_result = self.torch_urdf.link_fk_batch(full_config, use_names=True)
@@ -542,24 +507,6 @@ class Robot:
                 np.ndarrays of shape (batch_size, 4, 4) (map with poses for all 
                 links).
         """
-        # if auxiliary_joint_values is None:
-        #     auxiliary_joint_values = self.auxiliary_joint_defaults
-        # if config.ndim == 1:
-        #     config = config[None, :]
-        # batch_size = config.shape[0]
-        # full_config = np.zeros((batch_size, self.DOF), dtype=config.dtype)
-        # input_config_idx = 0
-        # for i, joint in enumerate(self.urdf.actuated_joints):
-        #     if joint.name in self.main_joint_names:
-        #         full_config[:, i] = config[:, input_config_idx]
-        #         input_config_idx += 1
-        #     elif joint.name in self.auxiliary_joint_names:
-        #         full_config[:, i] = auxiliary_joint_values[joint.name]
-        #     else:
-        #         raise ValueError(f"Unknown actuated joint: {joint.name}")
-        # assert input_config_idx == self.MAIN_DOF
-        # assert full_config.shape == (batch_size, self.DOF)
-
         full_config = self._construct_full_config(config, auxiliary_joint_values)
 
         fk_result = self.urdf.link_fk_batch(full_config)
@@ -602,24 +549,6 @@ class Robot:
                 tensors of shape (batch_size, 4, 4) (map with poses for all 
                 links).
         """
-        # if auxiliary_joint_values is None:
-        #     auxiliary_joint_values = self.auxiliary_joint_defaults
-        # if config.dim() == 1:
-        #     config = config.unsqueeze(0)
-        # batch_size = config.shape[0]
-        # full_config = torch.zeros((batch_size, self.DOF), dtype=config.dtype, device=config.device)
-        # input_config_idx = 0
-        # for i, joint in enumerate(self.urdf.actuated_joints):
-        #     if joint.name in self.main_joint_names:
-        #         full_config[:, i] = config[:, input_config_idx]
-        #         input_config_idx += 1
-        #     elif joint.name in self.auxiliary_joint_names:
-        #         full_config[:, i] = auxiliary_joint_values[joint.name]
-        #     else:
-        #         raise ValueError(f"Unknown actuated joint: {joint.name}")
-        # assert input_config_idx == self.MAIN_DOF
-        # assert full_config.shape == (batch_size, self.DOF)
-
         full_config = self._torch_construct_full_config(config, auxiliary_joint_values)
         fk_result = self.torch_urdf.visual_geometry_fk_batch(full_config, use_names=True)
         
@@ -681,6 +610,8 @@ class Robot:
         are part of the auxiliary joints. All main joints are assumed to be
         before any end-effector link in the kinematic chain.
 
+        NOTE: Does not apply visual transform of the mesh as stored in the urdf
+
         Args:
             pose: np.ndarray of shape (B, 4, 4) or (4, 4), the pose of the link 
                 with name `frame`
@@ -733,6 +664,12 @@ class Robot:
         """
         Forward kinematics for the end effector links (torch version).
 
+        NOTE: An assumption is made that any joints between end-effector links
+        are part of the auxiliary joints. All main joints are assumed to be
+        before any end-effector link in the kinematic chain.
+        
+        NOTE: Does not apply visual transform of the mesh as stored in the urdf
+
         Args:
             pose: torch.Tensor of shape (batch_size, 4, 4), the pose of the link with name `frame`
             frame: str, link that is the reference frame for the pose
@@ -758,7 +695,7 @@ class Robot:
         fk_result[frame] = pose
         tcp_to_frame = self.torch_fixed_eef_link_transforms[frame].to(
             dtype=pose.dtype, device=pose.device)
-        tcp_absolute_pose = torch.matmul(pose, torch.linalg.inv(tcp_to_frame))
+        tcp_absolute_pose = torch.matmul(pose, torch.linalg.inv(tcp_to_frame)) # pylint: disable=not-callable
         for link_name, tcp_to_link in self.torch_fixed_eef_link_transforms.items():
             if only_visual and link_name not in self.eef_visual_link_names:
                 continue
@@ -814,7 +751,6 @@ class Robot:
         for link_name, link_pose in fk_result.items():
             if link_name in self.eef_visual_link_names:
                 vis_transform: np.ndarray = self.get_visual_transform(link_name)
-                # fk_visual_result[link_name] = link_pose
                 fk_visual_result[link_name] = np.matmul(link_pose, vis_transform)
         return fk_visual_result
 
@@ -849,7 +785,8 @@ class Robot:
         fk_visual_result = {}
         for link_name, link_pose in fk_result.items():
             if link_name in self.eef_visual_link_names:
-                vis_transform: torch.Tensor = self.torch_get_visual_transform(link_name)
+                vis_transform: torch.Tensor = self.torch_get_visual_transform(
+                    link_name, dtype=link_pose.dtype)
                 fk_visual_result[link_name] = torch.matmul(link_pose, vis_transform)
         return fk_visual_result
 
@@ -1051,24 +988,6 @@ class Robot:
         Returns:
             List of tuples (radius: float, sphere_centers: torch.Tensor of shape [batch_size, num_spheres, 3])
         """
-        # if auxiliary_joint_values is None:
-        #     auxiliary_joint_values = self.auxiliary_joint_defaults
-        # if config.dim() == 1:
-        #     config = config.unsqueeze(0)
-        # batch_size = config.shape[0]
-        # full_config = torch.zeros((batch_size, self.DOF), dtype=config.dtype, device=config.device)
-        # input_config_idx = 0
-        # for i, joint in enumerate(self.urdf.actuated_joints):
-        #     if joint.name in self.main_joint_names:
-        #         full_config[:, i] = config[:, input_config_idx]
-        #         input_config_idx += 1
-        #     elif joint.name in self.auxiliary_joint_names:
-        #         full_config[:, i] = auxiliary_joint_values[joint.name]
-        #     else:
-        #         raise ValueError(f"Unknown actuated joint: {joint.name}")
-        # assert input_config_idx == self.MAIN_DOF
-        # assert full_config.shape == (batch_size, self.DOF)
-
         full_config = self._torch_construct_full_config(config, auxiliary_joint_values)
         
         fk = self.torch_urdf.link_fk_batch(full_config, use_names=True)

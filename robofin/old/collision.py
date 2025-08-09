@@ -5,9 +5,9 @@ import torch
 from geometrout import SE3, Sphere
 from geometrout.maths import transform_in_place
 
-import robofin.kinematics.numba as nfk
-import robofin.kinematics.torch as tfk
-from robofin.robot_constants import FrankaConstants
+import robofin.old.kinematics.numba as nfk
+import robofin.old.kinematics.torch as tfk
+from robofin.old.robot_constants import FrankaConstants
 
 SphereInfo = namedtuple("SphereInfo", "radii centers")
 
