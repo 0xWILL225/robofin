@@ -26,7 +26,7 @@ class Robot:
     """
     def __init__(self,
                  urdf_path: Union[str, Path],
-                 device: str = 'cpu'):
+                 device: str | torch.device = 'cpu'):
         """
         Initialize robot from directory containing URDF and config files.
         
@@ -849,16 +849,19 @@ class Robot:
         print("Generic collision-free IK not yet implemented for arbitrary robots")
         return None
 
-    def normalize_joints(self, config, limits=(-1, 1)):
+    def normalize_joints(self,
+                         config: np.ndarray | torch.Tensor,
+                         limits=(-1, 1)):
         """
-        Normalizes joint angles to be within a specified range according to the robot's
-        joint limits.
+        Normalizes joint angles to be within a specified range according to the 
+        robot's joint limits.
 
         Args:
-            config: Joint configuration as numpy array or torch.Tensor. Can have dims
-                  [MAIN_DOF] if a single configuration
-                  [B, MAIN_DOF] if a batch of configurations
-                  [B, T, MAIN_DOF] if a batched time-series of configurations
+            config: Joint configuration as numpy array or torch.Tensor. 
+                Can have dims:
+                    [MAIN_DOF] if a single configuration
+                    [B, MAIN_DOF] if a batch of configurations
+                    [B, T, MAIN_DOF] if a batched time-series of configurations
             limits: Tuple of (min, max) values to normalize to, default (-1, 1)
 
         Returns:
@@ -908,19 +911,25 @@ class Robot:
 
         return normalized
 
-    def unnormalize_joints(self, config, limits=(-1, 1)):
+    def unnormalize_joints(self,
+                           config: np.ndarray | torch.Tensor,
+                           limits=(-1, 1)):
         """
-        Unnormalizes joint angles from a specified range back to the robot's joint limits.
+        Unnormalizes joint angles from a specified range back to the robot's 
+        joint limits.
 
         Args:
-            config: Normalized joint configuration as numpy array or torch.Tensor. Can have dims
-                  [MAIN_DOF] if a single configuration
-                  [B, MAIN_DOF] if a batch of configurations
-                  [B, T, MAIN_DOF] if a batched time-series of configurations
-            limits: Tuple of (min, max) values the config was normalized to, default (-1, 1)
+            config: Normalized joint configuration as numpy array or 
+                torch.Tensor. Can have dims:
+                    [MAIN_DOF] if a single configuration
+                    [B, MAIN_DOF] if a batch of configurations
+                    [B, T, MAIN_DOF] if a batched time-series of configurations
+            limits: Tuple of (min, max) values the config was normalized to, 
+                default (-1, 1)
 
         Returns:
-            Unnormalized joint angles within the robot's joint limits, with same shape and type as input
+            Unnormalized joint angles within the robot's joint limits, with 
+            same shape and type as input
         """
 
         if isinstance(config, torch.Tensor):

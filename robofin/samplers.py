@@ -17,6 +17,7 @@ def label(array, lbl):
     return np.concatenate((array, lbl * np.ones((array.shape[0], 1))), axis=1)
 
 class SamplerBase:
+    """Base class for robot point cloud samplers."""
     def __init__(
         self,
         robot: Robot,
@@ -59,7 +60,7 @@ class SamplerBase:
                 points_to_save[key] = {"pc": pc, "normals": normals}
             file_name = self._get_cache_file_name_()
             print(f"Saving new file to cache: {file_name}")
-            np.save(file_name, points_to_save)
+            np.save(file_name, points_to_save) # type: ignore
 
     def _initialize_eef_points_and_normals(self, robot: Robot, N: int) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
         # Use configured end effector visual links
@@ -89,7 +90,7 @@ class SamplerBase:
         points = {}
         normals = {}
         for ii, mesh in enumerate(meshes):
-            link_pc, face_indices = trimesh.sample.sample_surface(
+            link_pc, face_indices = trimesh.sample.sample_surface( # type: ignore
                 mesh, int(num_points[ii])
             )
             points[f"eef_{links[ii].name}"] = link_pc
@@ -139,7 +140,7 @@ class SamplerBase:
         points = {}
         normals = {}
         for ii, mesh in enumerate(meshes):
-            link_pc, face_indices = trimesh.sample.sample_surface(mesh, num_points[ii])
+            link_pc, face_indices = trimesh.sample.sample_surface(mesh, num_points[ii]) # type: ignore
             points[links[ii].name] = link_pc
             normals[f"{links[ii].name}"] = self._init_normals(
                 mesh, link_pc, face_indices
@@ -154,7 +155,7 @@ class SamplerBase:
         normals = trimesh.unitize(
             (
                 mesh.vertex_normals[mesh.faces[face_indices]]
-                * trimesh.unitize(bary).reshape((-1, 3, 1))
+                * trimesh.unitize(bary).reshape((-1, 3, 1)) # type: ignore
             ).sum(axis=1)
         )
         return normals
@@ -180,7 +181,6 @@ class SamplerBase:
         self.points = {key: v["pc"] for key, v in points.item().items()}
         self.normals = {key: v["normals"] for key, v in points.item().items()}
         return True
-
 
 def get_points_on_robot_arm(robot: Robot,
                             config: np.ndarray,
@@ -225,7 +225,6 @@ def get_points_on_robot_arm(robot: Robot,
     return all_points
 
 
-
 def get_points_on_robot_arm_from_poses(robot: Robot,
                                        poses: Dict[str, np.ndarray],
                                        num_points: int,
@@ -261,7 +260,6 @@ def get_points_on_robot_arm_from_poses(robot: Robot,
             np.random.choice(all_points.shape[0], num_points, replace=False), :
         ]
     return all_points
-
 
 def get_points_on_robot_eef(robot: Robot,
                             pose: np.ndarray,
@@ -397,7 +395,7 @@ class TorchRobotSampler(SamplerBase):
         use_cache=True,
         cache_file_path: Optional[str | Path]=None,
         with_base_link=True,
-        device="cpu",
+        device: str | torch.device="cpu",
     ):
         logging.getLogger("trimesh").setLevel("ERROR")
         super().__init__(robot,
@@ -420,10 +418,10 @@ class TorchRobotSampler(SamplerBase):
     def end_effector_pose(self,
                           config,
                           auxiliary_joint_values: Optional[Dict[str, float]]=None, 
-                          frame: Optional[str]=None):
+                          frame: Optional[str]=None) -> torch.Tensor:
         """
         Return the pose of the end effector link `frame` when the robot's 
-        configuration is `config`.
+        configuration is `config`. Return tensor has batch dimension.
         """
         if frame is None:
             frame = self.robot.tcp_link_name
@@ -431,7 +429,9 @@ class TorchRobotSampler(SamplerBase):
         if config.ndim == 1:
             config = config.unsqueeze(0)
 
-        return self.robot.fk_torch(config, auxiliary_joint_values, link_name=frame)
+        eef_pose = self.robot.fk_torch(config, auxiliary_joint_values, link_name=frame)
+        assert isinstance(eef_pose, torch.Tensor)
+        return eef_pose
 
     def _sample_end_effector(
         self,
@@ -482,10 +482,10 @@ class TorchRobotSampler(SamplerBase):
                 torch.cat(
                     (
                         pc,
-                        link_idx * torch.ones((pc.size(0), pc.size(1), 1)).type_as(pc),
-                    ),
+                        link_idx * torch.ones((pc.size(0), pc.size(1), 1)).type_as(pc), # type: ignore
+                    ), # type: ignore
                     dim=-1,
-                )
+                ) # type: ignore
             )
             if with_normals:
                 normals = transform_point_cloud(
@@ -502,10 +502,10 @@ class TorchRobotSampler(SamplerBase):
                         (
                             normals,
                             link_idx
-                            * torch.ones((normals.size(0), normals.size(1), 1)).type_as(
-                                normals
-                            ),
-                        ),
+                            * torch.ones((normals.size(0), normals.size(1), 1)).type_as( # type: ignore
+                                normals # type: ignore
+                            ), 
+                        ), # type: ignore
                         dim=-1,
                     )
                 )
@@ -514,12 +514,12 @@ class TorchRobotSampler(SamplerBase):
             normals = torch.cat(fk_normals, dim=1)
         if num_points is None:
             if with_normals:
-                return pc, normals
+                return pc, normals # type: ignore
             else:
                 return pc
         sample_idxs = np.random.choice(pc.shape[1], num_points, replace=False)
         if with_normals:
-            return (pc[:, sample_idxs, :], normals[:, sample_idxs, :])
+            return (pc[:, sample_idxs, :], normals[:, sample_idxs, :]) # type: ignore
         return pc[:, sample_idxs, :]
 
     def sample_end_effector_with_normals(
@@ -592,9 +592,9 @@ class TorchRobotSampler(SamplerBase):
                 torch.cat(
                     (
                         pc,
-                        link_idx * torch.ones((pc.size(0), pc.size(1), 1)).type_as(pc),
-                    ),
-                    dim=-1,
+                        link_idx * torch.ones((pc.size(0), pc.size(1), 1)).type_as(pc), # type: ignore
+                    ), # type: ignore
+                    dim=-1, # type: ignore
                 )
             )
             if with_normals:
@@ -606,28 +606,28 @@ class TorchRobotSampler(SamplerBase):
                     vector=True,
                     in_place=in_place,
                 )
-                normals.append(
+                normals.append( # type: ignore
                     torch.cat(
                         (
                             normals,
                             link_idx
-                            * torch.ones((normals.size(0), normals.size(1), 1)).type_as(
-                                normals
+                            * torch.ones((normals.size(0), normals.size(1), 1)).type_as( # type: ignore
+                                normals # type: ignore
                             ),
-                        ),
+                        ), # type: ignore
                         dim=-1,
-                    )
+                    ) # type: ignore
                 )
         pc = torch.cat(points, dim=1)
         if with_normals:
-            normals = torch.cat(normals, dim=1)
+            normals = torch.cat(normals, dim=1) # type: ignore
         if num_points is None:
             if with_normals:
-                return pc, normals
+                return pc, normals # type: ignore
             return pc
         random_idxs = np.random.choice(pc.shape[1], num_points, replace=False)
         if with_normals:
-            return pc[:, random_idxs, :], normals[:, random_idxs, :]
+            return pc[:, random_idxs, :], normals[:, random_idxs, :] # type: ignore
         return pc[:, random_idxs, :]
 
     def _sample(
@@ -673,10 +673,10 @@ class TorchRobotSampler(SamplerBase):
                 in_place=in_place,
             )
             fk_points.append(
-                torch.cat(
+                torch.cat( # type: ignore
                     (
                         pc,
-                        link_idx * torch.ones((pc.size(0), pc.size(1), 1)).type_as(pc),
+                        link_idx * torch.ones((pc.size(0), pc.size(1), 1)).type_as(pc), # type: ignore
                     ),
                     dim=-1,
                 )
@@ -691,12 +691,12 @@ class TorchRobotSampler(SamplerBase):
                     in_place=in_place,
                 )
                 fk_normals.append(
-                    torch.cat(
+                    torch.cat( # type: ignore
                         (
                             normals,
                             link_idx
-                            * torch.ones((normals.size(0), normals.size(1), 1)).type_as(
-                                normals
+                            * torch.ones((normals.size(0), normals.size(1), 1)).type_as( # type: ignore
+                                normals # type: ignore
                             ),
                         ),
                         dim=-1,
@@ -707,11 +707,11 @@ class TorchRobotSampler(SamplerBase):
             normals = torch.cat(fk_normals, dim=1)
         if num_points is None:
             if with_normals:
-                return pc, normals
+                return pc, normals # type: ignore
             return pc
         random_idxs = np.random.choice(pc.shape[1], num_points, replace=False)
         if with_normals:
-            return pc[:, random_idxs, :], normals[:, random_idxs, :]
+            return pc[:, random_idxs, :], normals[:, random_idxs, :] # type: ignore
         return pc[:, random_idxs, :]
 
     def sample(

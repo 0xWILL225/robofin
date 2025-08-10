@@ -182,9 +182,12 @@ def test_deterministic_compare():
     assert compare_point_clouds(eef_samples1, eef_samples2.squeeze().numpy())
 
 
+from geometrout.transform import SE3
+
 from robofin.old import samplers as old_samplers
 from robofin.old.robot_constants import FrankaConstants
 from robofin.old.robots import FrankaRobot
+from robofin.old.samplers import TorchFrankaCollisionSampler
 
 franka_robot = Robot("/workspace/assets/panda/panda.urdf")
 
@@ -266,8 +269,44 @@ def test_compare_with_original_samplers():
     )
 
 
+def test_compare_fk_with_franka_robot():
+    frame = franka_robot.tcp_link_name
+    franka_eef_pose_se3: SE3 = FrankaRobot.fk(FrankaConstants.NEUTRAL, eff_frame=frame)
+    franka_eef_pose = franka_eef_pose_se3.matrix
+    eef_pose = franka_robot.fk(franka_robot.neutral_config, link_name=frame)
+
+    assert isinstance(eef_pose, np.ndarray)
+    assert np.allclose(franka_eef_pose, eef_pose.squeeze())
+
+from math import isclose
+
+def test_compare_compute_spheres_with_original():
+    device = franka_robot.device
+    c_sampler = TorchFrankaCollisionSampler(device)
+
+    batch_dim = 5
+    torch_neutral_config = torch.tensor(franka_robot.neutral_config, 
+                                        dtype=torch.float32, 
+                                        device=device)
+    batched_configs = torch_neutral_config.unsqueeze(0).repeat(batch_dim, 1).to(device)
+    prismatic_joint = 0.04
+    auxiliary_joint_values = {'panda_finger_joint1': 0.04, 'panda_finger_joint2': 0.04}
+
+    franka_collision_spheres = c_sampler.compute_spheres(batched_configs, 
+                                                         prismatic_joint=prismatic_joint)
+    generic_collision_spheres = robot.compute_spheres(batched_configs, 
+                                                      auxiliary_joint_values)
+
+    # check all sphere radii groups except the first two, which I altered
+    for (franka_radius, franka_spheres), (radius, spheres) in zip(franka_collision_spheres[2:],
+                                                                  generic_collision_spheres[2:]):
+        # franka_spheres and spheres: torch.Tensor [B, num_spheres, 3], 3-dim is x,y,z
+        assert isclose(franka_radius, radius), f"franka_radius: {franka_radius} != radius: {radius}"
+        assert franka_spheres.shape == spheres.shape, f"franka_spheres.shape: {franka_spheres.shape} != spheres.shape: {spheres.shape}"
+        assert torch.allclose(franka_spheres, spheres), "franka_spheres != spheres"
+
 if __name__ == "__main__":
-    print("Testing generic samplers...")
+    print("Testing samplers...")
 
     print("Running test_fk...")
     test_fk()
@@ -292,5 +331,13 @@ if __name__ == "__main__":
     print("Running test_compare_with_original_samplers...")
     test_compare_with_original_samplers()
     print("✓ test_compare_with_original_samplers passed")
+
+    print("Running test_compare_fk_with_franka_robot...")
+    test_compare_fk_with_franka_robot()
+    print("✓ test_compare_fk_with_franka_robot passed")
+
+    print("Running test_compare_compute_spheres_with_original...")
+    test_compare_compute_spheres_with_original()
+    print("✓ test_compare_compute_spheres_with_original passed")
 
     print("All tests passed!")
