@@ -378,7 +378,7 @@ class Robot:
                 vector including auxiliary joints.
         """
 
-        assert str(config.device) == self.device, f"Config device '{config.device}' does not match robot device '{self.device}'"
+        assert str(config.device) == str(self.device), f"Config device '{config.device}' does not match robot device '{self.device}'"
 
         if auxiliary_joint_values is None:
             auxiliary_joint_values = self.auxiliary_joint_defaults
@@ -447,7 +447,7 @@ class Robot:
         config: torch.Tensor,
         auxiliary_joint_values: Optional[Dict[str, float]]=None,
         link_name: Optional[str]=None,
-        base_pose: torch.Tensor=torch.eye(4)
+        base_pose: Optional[torch.Tensor]=None
     ) -> Union[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward kinematics for specified link (torch version).
@@ -460,7 +460,8 @@ class Robot:
                 joint names to values
             link_name : str, the name of the link to compute FK for. If None, 
                 FK for all links are returned.
-            base_pose : torch of shape (4, 4), the pose of the robot base link
+            base_pose : None or torch.Tensor of shape (4, 4), the pose of the 
+                robot base link. If None, acts as if identity pose.
 
         Returns:
             fk_result : Tensor of shape (batch_size, 4, 4) (poses for given link) 
@@ -471,12 +472,14 @@ class Robot:
 
         fk_result = self.torch_urdf.link_fk_batch(full_config, use_names=True)
         if link_name is None:
-            if not torch.allclose(base_pose, torch.eye(4, device=base_pose.device)):
+            if base_pose is not None:
                 for k in fk_result:
+                    assert base_pose.device == fk_result[k].device
                     fk_result[k] = torch.matmul(base_pose, fk_result[k])
             return fk_result
 
-        if not torch.allclose(base_pose, torch.eye(4, device=base_pose.device)):
+        if base_pose is not None:
+            assert base_pose.device == fk_result[link_name].device
             return torch.matmul(base_pose, fk_result[link_name])
         return fk_result[link_name]
 
@@ -515,8 +518,9 @@ class Robot:
             assert len(link.visuals) <= 1
             for visual in link.visuals:
                 key = link.name
-                fk_visual_result[key] = np.matmul(fk_result[link], visual.origin.astype(fk_result[link].dtype))
-                
+                fk_visual_result[key] = np.matmul(
+                    fk_result[link], visual.origin.astype(fk_result[link].dtype))
+
         if link_name is None:
             for k in fk_visual_result:
                 fk_visual_result[k] = np.matmul(base_pose, fk_visual_result[k])
@@ -527,7 +531,7 @@ class Robot:
         config: torch.Tensor,
         auxiliary_joint_values: Optional[Dict[str, float]]=None,
         link_name: Optional[str]=None,
-        base_pose: torch.Tensor=torch.eye(4)
+        base_pose: Optional[torch.Tensor]=None
     ) -> Union[Dict[str, torch.Tensor], torch.Tensor]:
         """
         Forward kinematics for all links with visual meshes (torch version).
@@ -540,8 +544,8 @@ class Robot:
                 joint names to values
             link_name : str, the name of the link to compute FK for. If None, 
                 FK for all links are returned.
-            base_pose : torch.Tensor of shape (4, 4), the pose of the robot base 
-                link
+            base_pose : None or torch.Tensor of shape (4, 4), the pose of the robot base 
+                link. If None, acts as if identity pose.
         
         Returns:
             fk_result : torch.Tensor of shape (batch_size, 4, 4) (poses for given 
@@ -551,12 +555,19 @@ class Robot:
         """
         full_config = self._torch_construct_full_config(config, auxiliary_joint_values)
         fk_result = self.torch_urdf.visual_geometry_fk_batch(full_config, use_names=True)
-        
+    
         if link_name is None:
-            for k in fk_result:
-                fk_result[k] = torch.matmul(base_pose, fk_result[k])
+            if base_pose is not None:
+                for k in fk_result:
+                    assert base_pose.device == fk_result[k].device
+                    fk_result[k] = torch.matmul(base_pose, fk_result[k])
             return fk_result
-        return torch.matmul(base_pose, fk_result[link_name])
+        
+        if base_pose is not None:
+            assert base_pose.device == fk_result[link_name].device
+            return torch.matmul(base_pose, fk_result[link_name])
+    
+        return fk_result[link_name]
 
     def _get_joint_transform(self, joint: urchin.Joint, q: float) -> np.ndarray:
         """

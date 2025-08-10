@@ -1,3 +1,8 @@
+"""
+Script for testing the output of forward kinematics and point sampling
+functions. Ensures determinisim when it is expected, and that numpy and
+pytorch based implementations return the same thing.
+"""
 import numpy as np
 import torch
 
@@ -7,35 +12,13 @@ from robofin.robots import Robot
 
 robot = Robot("/workspace/assets/panda/panda.urdf")
 
-
-def has_point(
-    point_cloud: np.ndarray, point: np.ndarray, tolerance: float = 1e-6
-) -> tuple[bool, np.ndarray]:
-    """
-    Returns:
-    exists, idx (bool, np.ndarray): Whether `point` exists in the point cloud
-        and the indices in the point cloud array where the point exists.
-    """
-    mask = np.max(np.abs(point_cloud - point), axis=1) <= tolerance
-    exists = mask.any()
-    idx = np.flatnonzero(mask)
-    return exists, idx
-
-
 def compare_point_clouds(
     pc1: np.ndarray, pc2: np.ndarray, abs_tol: float = 1e-7
 ) -> bool:
     """
     Return True if input point clouds are identical (within given tolerance)
     """
-    # return np.allclose(pc1, pc2, atol=abs_tol)
-    if np.allclose(pc1, pc2, atol=abs_tol):
-        return True
-
-    print("compare_point_clouds() returning False")
-    print("Largest error:", np.abs(pc1 - pc2).max())
-
-    return False
+    return np.allclose(pc1, pc2, atol=abs_tol)
 
 
 def test_fk():
@@ -285,8 +268,8 @@ def test_compare_compute_spheres_with_original():
     c_sampler = TorchFrankaCollisionSampler(device)
 
     batch_dim = 5
-    torch_neutral_config = torch.tensor(franka_robot.neutral_config, 
-                                        dtype=torch.float32, 
+    torch_neutral_config = torch.tensor(franka_robot.neutral_config,
+                                        dtype=torch.float32,
                                         device=device)
     batched_configs = torch_neutral_config.unsqueeze(0).repeat(batch_dim, 1).to(device)
     prismatic_joint = 0.04
