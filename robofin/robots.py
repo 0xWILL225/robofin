@@ -67,11 +67,11 @@ class Robot:
         robot_cfg = config['robot_config']
         self.tcp_link_name = robot_cfg['tcp_link_name']
         self.base_link_name = robot_cfg['base_link_name']
-        # self.eef_base_link_name = robot_cfg['eef_base_link_name']
+        self.arm_link_names = [l.name for l in self.urdf.links]
         self.eef_link_names = robot_cfg['eef_links']
-        self.eef_visual_link_names = robot_cfg['eef_visual_links']
-        self.arm_visual_link_names = robot_cfg['arm_visual_links']
-        self.arm_link_names = robot_cfg['arm_links']
+        self.arm_visual_link_names = [l.name for l in self.urdf.links if len(l.visuals) > 0]
+        self.eef_visual_link_names = [l.name for l in self.urdf.links if l.name in self.eef_link_names and (len(l.visuals) > 0)]
+        
         self.auxiliary_joint_names: List[str] = robot_cfg['auxiliary_joint_names']
         auxiliary_joints_values: List[float] = robot_cfg['auxiliary_joints_values']
         self.auxiliary_joint_defaults = {joint_name: joint_value for joint_name, joint_value in zip(self.auxiliary_joint_names, auxiliary_joints_values)}

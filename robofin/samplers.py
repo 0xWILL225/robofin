@@ -1,3 +1,6 @@
+"""
+This module provides classes and functions for sampling point clouds from robot meshes.
+"""
 import logging
 from pathlib import Path
 from typing import Dict, Optional, Union, Tuple
@@ -60,6 +63,8 @@ class SamplerBase:
                 points_to_save[key] = {"pc": pc, "normals": normals}
             file_name = self._get_cache_file_name_()
             print(f"Saving new file to cache: {file_name}")
+
+            file_name.parent.mkdir(parents=True, exist_ok=True)
             np.save(file_name, points_to_save) # type: ignore
 
     def _initialize_eef_points_and_normals(self, robot: Robot, N: int) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:

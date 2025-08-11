@@ -10,7 +10,8 @@ from robofin import samplers
 from robofin.robots import Robot
 
 
-robot = Robot("/workspace/assets/panda/panda.urdf")
+# robot = Robot("/workspace/assets/panda/panda.urdf")
+robot = Robot("/workspace/assets/gp7/gp7.urdf")
 
 def compare_point_clouds(
     pc1: np.ndarray, pc2: np.ndarray, abs_tol: float = 1e-7
@@ -275,10 +276,10 @@ def test_compare_compute_spheres_with_original():
     prismatic_joint = 0.04
     auxiliary_joint_values = {'panda_finger_joint1': 0.04, 'panda_finger_joint2': 0.04}
 
-    franka_collision_spheres = c_sampler.compute_spheres(batched_configs, 
-                                                         prismatic_joint=prismatic_joint)
-    generic_collision_spheres = robot.compute_spheres(batched_configs, 
-                                                      auxiliary_joint_values)
+    franka_collision_spheres = c_sampler.compute_spheres(
+        batched_configs, prismatic_joint=prismatic_joint)
+    generic_collision_spheres = franka_robot.compute_spheres(
+        batched_configs, auxiliary_joint_values)
 
     # check all sphere radii groups except the first two, which I altered
     for (franka_radius, franka_spheres), (radius, spheres) in zip(franka_collision_spheres[2:],
