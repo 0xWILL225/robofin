@@ -726,8 +726,8 @@ class TorchRobotSampler(SamplerBase):
         num_points=None,
         only_eff=False,
         in_place=True
-    ):
-        return self._sample(
+    ) -> torch.Tensor:
+        result = self._sample(
             with_normals=False,
             config=config,
             auxiliary_joint_values=auxiliary_joint_values,
@@ -735,9 +735,13 @@ class TorchRobotSampler(SamplerBase):
             only_eff=only_eff,
             in_place=in_place,
         )
+        assert isinstance(result, torch.Tensor)
+        return result
 
-    def sample_from_poses(self, poses, num_points=None, in_place=True):
-        return self._sample_from_poses(False, poses, num_points=num_points, in_place=in_place)
+    def sample_from_poses(self, poses: Dict[str, torch.Tensor], num_points: Optional[int]=None, in_place: bool=True) -> torch.Tensor:
+        result = self._sample_from_poses(False, poses, num_points=num_points, in_place=in_place)
+        assert isinstance(result, torch.Tensor)
+        return result
 
     def sample_with_normals(
         self,
