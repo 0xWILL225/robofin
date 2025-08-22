@@ -419,6 +419,7 @@ class TorchRobotSampler(SamplerBase):
             key: torch.as_tensor(val).unsqueeze(0).to(device)
             for key, val in self.normals.items()
         }
+        self.device: torch.device = torch.device(device)
 
     def end_effector_pose(self,
                           config,
@@ -567,6 +568,9 @@ class TorchRobotSampler(SamplerBase):
         """
         Sample points from the robot arm based on a a set of link poses 
         (no FK needed).
+        When num_points = None, all stored points are used, and they are sampled 
+        deterministically (as stored/cached).
+
         Args:
             with_normals (bool): Whether to return normals (returns tuple if so).
             poses (Dict[str, torch.Tensor]): The configuration of the robot.
@@ -646,6 +650,9 @@ class TorchRobotSampler(SamplerBase):
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Sample points from the robot arm based on a configuration.
+        When num_points = None, all stored points are used, and they are sampled 
+        deterministically (as stored/cached).
+
         Args:
             with_normals (bool): Whether to return normals (returns tuple if so).
             config (torch.Tensor): The configuration of the robot.
@@ -727,6 +734,22 @@ class TorchRobotSampler(SamplerBase):
         only_eff=False,
         in_place=True
     ) -> torch.Tensor:
+        """
+        Sample points from the robot arm based on a configuration.
+        When num_points = None, all stored points are used, and they are sampled 
+        deterministically (as stored/cached).
+
+        Args:
+            config (torch.Tensor): The configuration of the robot.
+            auxiliary_joint_values (Dict[str, float]): Dictionary mapping 
+                auxiliary joint names to their values.
+            num_points (Optional[int]): The number of points to sample.
+            only_eff (bool): Whether to sample only the end effector.
+            in_place (bool): Whether to perform the transformation in place.
+        Returns:
+            torch.Tensor: A tensor of shape (B, N, 4) 
+                (feature is [x,y,z,link_idx]) containing the sampled points.
+        """
         result = self._sample(
             with_normals=False,
             config=config,
@@ -738,7 +761,28 @@ class TorchRobotSampler(SamplerBase):
         assert isinstance(result, torch.Tensor)
         return result
 
-    def sample_from_poses(self, poses: Dict[str, torch.Tensor], num_points: Optional[int]=None, in_place: bool=True) -> torch.Tensor:
+    def sample_from_poses(
+        self, 
+        poses: Dict[str, torch.Tensor], 
+        num_points: Optional[int]=None, 
+        in_place: bool=True) -> torch.Tensor:
+        """
+        Sample points from the robot arm based on a a set of link poses 
+        (no FK needed).
+        When num_points = None, all stored points are used, and they are sampled 
+        deterministically (as stored/cached).
+        
+        Args:
+            with_normals (bool): Whether to return normals (returns tuple if so).
+            poses (Dict[str, torch.Tensor]): The configuration of the robot.
+            auxiliary_joint_values (Dict[str, float]): Dictionary mapping 
+                auxiliary joint names to their values.
+            num_points (Optional[int]): The number of points to sample.
+            in_place (bool): Whether to perform the transformation in place.
+        Returns:
+            torch.Tensor: A tensor of shape (B, N, 4) 
+                (feature is [x,y,z,link_idx]) containing the sampled points.
+        """
         result = self._sample_from_poses(False, poses, num_points=num_points, in_place=in_place)
         assert isinstance(result, torch.Tensor)
         return result
