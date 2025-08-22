@@ -22,7 +22,13 @@ from .torch_urdf import TorchURDF
 
 class Robot:
     """
-    Stateless class that provides helpful methods for a robot defined in a URDF.
+    (Almost) Stateless class that provides helpful methods for a robot defined 
+    in a URDF. Pytorch device counts as state I guess 
+    (doesn't change after init though).
+
+    This class could be substituted by some kind of "robot server" or singleton
+    that every part of the code can access, that way there's no need to pass 
+    around the robot object or create multiple instances of it.
     """
     def __init__(self,
                  urdf_path: Union[str, Path],
