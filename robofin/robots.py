@@ -230,7 +230,7 @@ class Robot:
                         visited.add(parent_link)
 
         self.torch_fixed_eef_link_transforms = {
-            k: torch.as_tensor(v, dtype=torch.float64, device=self.device)
+            k: torch.as_tensor(v, dtype=torch.float32, device=self.device)
             for k, v in self.fixed_eef_link_transforms.items()
         }
 
@@ -257,7 +257,7 @@ class Robot:
 
         visual = link.visuals[0] # first visual element (assumed only)
         if hasattr(visual, 'origin') and visual.origin is not None:
-            return np.asarray(visual.origin, dtype=np.float64)
+            return np.asarray(visual.origin, dtype=np.float32)
 
         cprint(f"get_visual_transform() | Warning: No visual origin found for link {link_name}", "yellow")
         return np.eye(4)
