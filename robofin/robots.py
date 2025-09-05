@@ -958,6 +958,43 @@ class Robot:
                 (config >= limits[0]) & (config <= limits[1])
             ), f"Normalized values must be in range [{limits[0]}, {limits[1]}]"
 
+            ### more informative assert for debugging
+            # valid_range = (config >= limits[0]) & (config <= limits[1])
+            # valid_finite = torch.isfinite(config)
+            # valid = valid_range & valid_finite
+            # if not torch.all(valid):
+            #     nan_mask = torch.isnan(config)
+            #     inf_mask = torch.isinf(config)
+            #     below_mask = config < limits[0]
+            #     above_mask = config > limits[1]
+
+            #     def summarize(mask: torch.Tensor, name: str) -> str:
+            #         if torch.any(mask):
+            #             idx = torch.nonzero(mask, as_tuple=False)
+            #             vals = config[mask]
+            #             max_list = 10
+            #             idx_list = idx.detach().cpu().tolist()[:max_list]
+            #             val_list = vals.detach().cpu().tolist()[:max_list]
+            #             more = (
+            #                 ""
+            #                 if idx.size(0) <= max_list
+            #                 else f" (+{idx.size(0) - max_list} more)"
+            #             )
+            #             return (
+            #                 f"{name}: count={idx.size(0)}, idx={idx_list}, vals={val_list}{more}"
+            #             )
+            #         return f"{name}: count=0"
+
+            #     msg_parts = [
+            #         f"Normalized values must be finite and in range [{limits[0]}, {limits[1]}]",
+            #         f"tensor.shape={tuple(config.shape)}, device={config.device}",
+            #         summarize(nan_mask, "NaN"),
+            #         summarize(inf_mask, "Inf"),
+            #         summarize(below_mask, "Below min"),
+            #         summarize(above_mask, "Above max"),
+            #     ]
+            #     raise AssertionError("; ".join(msg_parts))
+
             joint_limits = torch.tensor(
                 self.main_joint_limits, dtype=config.dtype, device=config.device
             )
