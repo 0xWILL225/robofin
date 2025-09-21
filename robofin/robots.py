@@ -43,7 +43,7 @@ class Robot:
         ├── collision_spheres/        # Collision spheres
         └── meshes/                   # Mesh files
         """
-        self.urdf_path = urdf_path
+        self.urdf_path: str | Path = urdf_path
         self.robot_directory = Path(urdf_path).parent
         self.device = device
         self.urdf = urchin.URDF.load(str(self.urdf_path), lazy_load_meshes=True)
